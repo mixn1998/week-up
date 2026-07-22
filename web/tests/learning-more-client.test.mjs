@@ -1,0 +1,83 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+
+import { createLearningMoreClient } from "../lib/learning-more-client.ts";
+
+globalThis.btoa ??= (value) => Buffer.from(value, "binary").toString("base64");
+
+test("imports the full course catalog but only lessons already placed on the Learning MORE timetable without clock time", async () => {
+  const calls = [];
+  const fetcher = async (url) => {
+    calls.push(String(url));
+    const parsed = new URL(url);
+    if (parsed.pathname.endsWith("/home")) return Response.json({
+      generatedAt: "2026-07-20T03:00:00Z",
+      courses: [{ courseId: "c1", title: "概率论", status: "closed" }, { courseId: "c2", title: "未排课程", status: "active" }],
+      lessons: [{ courseId: "c1", lessonId: "l1", title: "条件概率", objective: "完成例题", progress: "completed", lastActivityAt: "2026-07-20T02:00:00Z" }, { courseId: "c2", lessonId: "l2", title: "不会同步", progress: "not_started" }],
+      schedule: [{ scheduleItemId: "s1", courseId: "c1", lessonId: "l1", startAt: "2026-07-20T01:00:00Z", endAt: "2026-07-20T02:00:00Z" }],
+    });
+    if (!parsed.searchParams.has("cursor")) return Response.json({ entries: [{ factId: "f1", factType: "LessonCompletedFact", occurredAt: "2026-07-20T02:00:00Z", subjectRefs: { courseId: "c1", lessonId: "l1" } }], nextCursor: "page-2" });
+    return Response.json({ entries: [{ factId: "f2", factType: "CourseClosedFact", occurredAt: "2026-07-20T02:01:00Z", subjectRefs: { courseId: "c1" } }] });
+  };
+  const batch = await createLearningMoreClient("http://learning-more.local/", fetcher).pull();
+  assert.equal(calls.length, 4);
+  assert.deepEqual(batch.courses, [{ courseId: "c1", title: "概率论", status: "closed" }, { courseId: "c2", title: "未排课程", status: "active" }]);
+  assert.deepEqual(batch.lessons, [{ courseId: "c1", lessonId: "l1", scheduleItemId: "s1", scheduledDate: "2026-07-20", title: "条件概率", objective: "完成例题", order: 0 }]);
+  assert.equal("schedule" in batch, false);
+  assert.equal("startAt" in batch.lessons[0], false);
+  assert.deepEqual(batch.facts.map((fact) => fact.type), ["lesson-completed", "course-closed"]);
+  assert.equal(batch.facts[1].courseTitle, "概率论");
+  assert.ok(batch.nextCursor);
+});
+
+test("reports HTTP failures without partially importing", async () => {
+  const fetcher = async (url) => String(url).endsWith("/home") ? new Response(null, { status: 503 }) : Response.json({ items: [] });
+  await assert.rejects(() => createLearningMoreClient("http://learning-more.local", fetcher).pull(), /learning_more_http_503/);
+});
+
+test("reconstructs past completed lessons from history after they leave the current timetable", async () => {
+  const fetcher = async (url) => {
+    const parsed = new URL(url);
+    if (parsed.pathname.endsWith("/home")) return Response.json({
+      generatedAt: "2026-07-20T12:00:00Z",
+      courses: [{ courseId: "course-game", title: "游戏设计", status: "active" }],
+      lessons: [
+        { courseId: "course-game", lessonId: "lesson-past", title: "卡牌设计的本质", objective: "制造有意义的选择", progress: "completed", lastActivityAt: "2026-07-17T03:40:00Z" },
+        { courseId: "course-game", lessonId: "lesson-today", title: "今天的课程", progress: "not_started" },
+        { courseId: "course-game", lessonId: "lesson-completed-today", title: "今天已完成的课程", progress: "completed", lastActivityAt: "2026-07-20T10:00:00Z" },
+      ],
+      schedule: [{ scheduleItemId: "schedule-today", courseId: "course-game", lessonId: "lesson-today", startAt: "2026-07-20T01:00:00Z", endAt: "2026-07-20T02:00:00Z" }],
+    });
+    if (parsed.pathname.endsWith("/history/calendar")) return Response.json({
+      days: [
+        { localDate: "2026-07-17", actualSeconds: 2400, completedLessonIds: ["lesson-past"], completions: [{ lessonId: "lesson-past", courseId: "course-game", actualSeconds: 2400, actualStartedAt: "2026-07-17T02:10:00.000Z", actualEndedAt: "2026-07-17T03:40:00.000Z" }] },
+        { localDate: "2026-07-20", actualSeconds: 1800, completedLessonIds: ["lesson-completed-today"], completions: [{ lessonId: "lesson-completed-today", courseId: "course-game", actualSeconds: 1800 }] },
+      ],
+    });
+    return Response.json({ entries: [] });
+  };
+
+  const batch = await createLearningMoreClient("http://learning-more.local", fetcher).pull("latest-cursor");
+
+  assert.deepEqual(batch.lessons.map((lesson) => [lesson.lessonId, lesson.scheduledDate, lesson.scheduleItemId]), [
+    ["lesson-past", "2026-07-17", "history:2026-07-17:lesson-past"],
+    ["lesson-today", "2026-07-20", "schedule-today"],
+    ["lesson-completed-today", "2026-07-20", "history:2026-07-20:lesson-completed-today"],
+  ]);
+  assert.deepEqual(batch.facts.filter((fact) => fact.type === "lesson-completed").map((fact) => [fact.lessonId, fact.occurredAt]), [
+    ["lesson-past", "2026-07-17T12:00:00+08:00"],
+    ["lesson-completed-today", "2026-07-20T12:00:00+08:00"],
+  ]);
+  assert.deepEqual(
+    batch.facts.find((fact) => fact.type === "lesson-completed" && fact.lessonId === "lesson-past"),
+    {
+      factId: "calendar-completed:2026-07-17:lesson-past",
+      type: "lesson-completed",
+      occurredAt: "2026-07-17T12:00:00+08:00",
+      courseId: "course-game",
+      lessonId: "lesson-past",
+      actualStartedAt: "2026-07-17T02:10:00.000Z",
+      actualEndedAt: "2026-07-17T03:40:00.000Z",
+    },
+  );
+});
