@@ -2,7 +2,7 @@
 
 > A local-first weekly planning and review workspace that turns intentions into an actionable growth loop.
 
-Week UP 是我给自己做的一套计划与复盘工具，也还在持续迭代中。
+Week UP 是我给自己做的一套计划与复盘工具，目前还在使用中持续迭代。
 
 当前公开仓库是经过脱敏、移除原始 Git 历史的作品集快照。截图使用虚构计划和演示数据，不包含真实日程、回顾、体重数据或本地数据库。
 
