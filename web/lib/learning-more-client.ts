@@ -73,8 +73,15 @@ export function createLearningMoreClient(baseUrl: string, fetcher: typeof fetch 
       const lessonById = new Map(home.lessons.map((lesson) => [lesson.lessonId, lesson]));
       const today = shanghaiDate(home.generatedAt ?? new Date().toISOString());
       const scheduled = [...(home.schedule ?? [])]
-        .filter((item) => shanghaiDate(item.startAt) >= today)
         .sort((left, right) => left.startAt.localeCompare(right.startAt) || left.scheduleItemId.localeCompare(right.scheduleItemId));
+      const scheduleItemForCompletion = (lessonId: string, courseId: string | undefined, localDate: string): string | undefined => {
+        const matches = scheduled.filter((item) =>
+          item.lessonId === lessonId &&
+          (courseId === undefined || item.courseId === courseId) &&
+          shanghaiDate(item.startAt) === localDate
+        );
+        return matches.length === 1 ? matches[0].scheduleItemId : undefined;
+      };
       const calendarUrl = new URL(`${base}/api/v1/history/calendar`, globalThis.location?.origin ?? "http://127.0.0.1");
       calendarUrl.searchParams.set("from", shiftShanghaiDate(today, -365));
       calendarUrl.searchParams.set("to", today);
@@ -142,6 +149,7 @@ export function createLearningMoreClient(baseUrl: string, fetcher: typeof fetch 
           occurredAt: `${completion.localDate}T12:00:00+08:00`,
           courseId,
           lessonId: completion.lessonId,
+          ...(scheduleItemForCompletion(completion.lessonId, courseId, completion.localDate) ? { scheduleItemId: scheduleItemForCompletion(completion.lessonId, courseId, completion.localDate) } : {}),
           ...(completion.actualStartedAt ? { actualStartedAt: completion.actualStartedAt } : {}),
           ...(completion.actualEndedAt ? { actualEndedAt: completion.actualEndedAt } : {}),
         });
@@ -159,6 +167,7 @@ export function createLearningMoreClient(baseUrl: string, fetcher: typeof fetch 
             occurredAt: entry.occurredAt,
             courseId,
             lessonId: entry.subjectRefs.lessonId,
+            ...(scheduleItemForCompletion(entry.subjectRefs.lessonId, courseId, shanghaiDate(entry.occurredAt)) ? { scheduleItemId: scheduleItemForCompletion(entry.subjectRefs.lessonId, courseId, shanghaiDate(entry.occurredAt)) } : {}),
             ...(payloadStart ? { actualStartedAt: payloadStart } : {}),
             ...(payloadEnd ? { actualEndedAt: payloadEnd } : {}),
           });
@@ -170,7 +179,7 @@ export function createLearningMoreClient(baseUrl: string, fetcher: typeof fetch 
       for (const item of lessons) {
         const lesson = lessonById.get(item.lessonId);
         if (lesson?.progress === "completed" && !lessonFacts.has(item.lessonId)) {
-          lessonFacts.set(item.lessonId, { factId: `lesson-completed:${item.lessonId}`, type: "lesson-completed", occurredAt: lesson.lastActivityAt ?? `${item.scheduledDate}T12:00:00+08:00`, courseId: item.courseId, lessonId: item.lessonId });
+          lessonFacts.set(item.lessonId, { factId: `lesson-completed:${item.lessonId}`, type: "lesson-completed", occurredAt: lesson.lastActivityAt ?? `${item.scheduledDate}T12:00:00+08:00`, courseId: item.courseId, lessonId: item.lessonId, scheduleItemId: item.scheduleItemId });
         }
       }
       for (const course of home.courses) {

@@ -81,3 +81,24 @@ test("reconstructs past completed lessons from history after they leave the curr
     },
   );
 });
+
+test("keeps an unfinished past timetable item so Week UP can mark it overdue", async () => {
+  const fetcher = async (url) => {
+    const parsed = new URL(url);
+    if (parsed.pathname.endsWith("/home")) return Response.json({
+      generatedAt: "2026-07-25T02:00:00Z",
+      courses: [{ courseId: "course-business", title: "Business", status: "active" }],
+      lessons: [{ courseId: "course-business", lessonId: "lesson-overdue", title: "工业设备交付案", objective: "区分事实", progress: "not_started" }],
+      schedule: [{ scheduleItemId: "schedule-yesterday", courseId: "course-business", lessonId: "lesson-overdue", startAt: "2026-07-24T11:00:00.000Z", endAt: "2026-07-24T11:40:00.000Z" }],
+    });
+    if (parsed.pathname.endsWith("/history/calendar")) return Response.json({ days: [] });
+    return Response.json({ entries: [] });
+  };
+
+  const batch = await createLearningMoreClient("http://learning-more.local", fetcher).pull("latest-cursor");
+
+  assert.deepEqual(batch.lessons.map((lesson) => [lesson.lessonId, lesson.scheduleItemId, lesson.scheduledDate, lesson.title]), [
+    ["lesson-overdue", "schedule-yesterday", "2026-07-24", "工业设备交付案"],
+  ]);
+  assert.deepEqual(batch.facts, []);
+});

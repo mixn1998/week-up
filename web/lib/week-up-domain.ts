@@ -229,6 +229,7 @@ export type LearningMoreFact = Readonly<
       occurredAt: string;
       courseId: string;
       lessonId: string;
+      scheduleItemId?: string;
       actualStartedAt?: string;
       actualEndedAt?: string;
     }
@@ -1318,14 +1319,26 @@ export function dispatchWeekUp(state: WeekUpState, command: WeekUpCommand, conte
           const sourceRef = learningMoreSourceRef(lesson.scheduleItemId);
           const existing = [...plans].reverse().find((plan) => plan.source === "learning-more" && plan.sourceRef === sourceRef)
             ?? [...plans].reverse().find((plan) => plan.source === "learning-more" && plan.sourceLessonId === lesson.lessonId && plan.sourceRef === undefined);
-          if (existing && activeCompletion(next, existing.id)) continue;
+          const existingCompletion = existing ? activeCompletion(next, existing.id) : undefined;
           const keepsDate = existing !== undefined && localDate(existing.startAt) === lesson.scheduledDate;
           const startAt = keepsDate ? existing.startAt : `${lesson.scheduledDate}T00:00:00+08:00`;
           const endAt = keepsDate ? existing.endAt : `${lesson.scheduledDate}T01:00:00+08:00`;
           const configured = project.rewardsPerUnit.length > 0;
           if (existing) {
             const { removedAt: _removedAt, ...activePlan } = existing;
-            const updated: PlanRecord = {
+            const updated: PlanRecord = existingCompletion ? {
+              ...activePlan,
+              title: lesson.title,
+              titleMode: "template",
+              detail: lesson.objective,
+              category: project.category,
+              templateKind: "project",
+              projectId: project.id,
+              sourceCourseId: lesson.courseId,
+              sourceRef,
+              sourceLessonId: lesson.lessonId,
+              updatedAt: now,
+            } : {
               ...activePlan,
               title: lesson.title,
               titleMode: "template",
@@ -1396,15 +1409,24 @@ export function dispatchWeekUp(state: WeekUpState, command: WeekUpCommand, conte
           }
           continue;
         }
-        const lesson = next.learningMoreLessons.find((item) => item.lessonId === fact.lessonId);
+        const factSourceRef = fact.scheduleItemId ? learningMoreSourceRef(fact.scheduleItemId) : undefined;
+        const lesson = fact.scheduleItemId
+          ? next.learningMoreLessons.find((item) => item.scheduleItemId === fact.scheduleItemId)
+          : next.learningMoreLessons.find((item) => item.lessonId === fact.lessonId);
         if (lesson && lesson.completedAt !== fact.occurredAt) {
-          next = { ...next, learningMoreLessons: next.learningMoreLessons.map((item) => item.lessonId === fact.lessonId ? { ...item, completedAt: fact.occurredAt, lastSyncedAt: now } : item) };
+          next = { ...next, learningMoreLessons: next.learningMoreLessons.map((item) => item.scheduleItemId === lesson.scheduleItemId ? { ...item, completedAt: fact.occurredAt, lastSyncedAt: now } : item) };
           didChange = true;
         }
-        const plan = [...next.plans]
-          .filter((item) => item.source === "learning-more" && item.sourceLessonId === fact.lessonId)
-          .sort((left, right) => left.startAt.localeCompare(right.startAt))
-          .find((item) => item.overdueRescheduledPlanId === undefined && activeCompletion(next, item.id) === undefined) ?? next.plans.find((item) => item.source === "learning-more" && item.sourceLessonId === fact.lessonId);
+        const candidatePlans = [...next.plans]
+          .filter((item) => item.source === "learning-more" && (factSourceRef ? item.sourceRef === factSourceRef : item.sourceLessonId === fact.lessonId))
+          .sort((left, right) => Math.abs(Date.parse(left.startAt) - Date.parse(fact.occurredAt)) - Math.abs(Date.parse(right.startAt) - Date.parse(fact.occurredAt)) || left.startAt.localeCompare(right.startAt));
+        const plan = candidatePlans.find((item) => item.overdueRescheduledPlanId === undefined && activeCompletion(next, item.id) === undefined)
+          ?? candidatePlans[0]
+          ?? [...next.plans]
+            .filter((item) => item.source === "learning-more" && item.sourceLessonId === fact.lessonId)
+            .sort((left, right) => Math.abs(Date.parse(left.startAt) - Date.parse(fact.occurredAt)) - Math.abs(Date.parse(right.startAt) - Date.parse(fact.occurredAt)) || left.startAt.localeCompare(right.startAt))
+            .find((item) => item.overdueRescheduledPlanId === undefined && activeCompletion(next, item.id) === undefined)
+          ?? next.plans.find((item) => item.source === "learning-more" && item.sourceLessonId === fact.lessonId);
         if (!plan) continue;
         const actualStart = fact.actualStartedAt;
         const actualEnd = fact.actualEndedAt;

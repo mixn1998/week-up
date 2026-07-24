@@ -53,9 +53,24 @@ test("diffs Learning MORE lessons by schedule item so repeated lesson ids can be
   assert.deepEqual(delta?.lessons?.map((item) => [item.scheduleItemId, item.objective]), [["schedule-keep", "keep updated"], ["schedule-new", "new"]]);
 });
 
-test("ignores a repeated completion fact once the lesson is already completed", () => {
+test("emits a lesson when the cached Learning MORE row is current but its Week UP plan mirror is stale", () => {
   const imported = dispatchWeekUp(createEmptyWeekUpState(), { type: "learning-more.import", courses: [course], lessons: [lesson], facts: [], nextCursor: "cursor-1" }, context()).state;
-  const completed = {
+  const changedLesson = { ...lesson, title: "新课节标题", objective: "新课节目标" };
+  const staleMirror = {
+    ...imported,
+    learningMoreLessons: imported.learningMoreLessons.map((item) => item.scheduleItemId === lesson.scheduleItemId
+      ? { ...item, title: changedLesson.title, objective: changedLesson.objective }
+      : item),
+  };
+
+  const delta = createLearningMoreDelta(staleMirror, { courses: [course], lessons: [changedLesson], facts: [], nextCursor: "cursor-1" });
+
+  assert.deepEqual(delta?.lessons, [changedLesson]);
+});
+
+test("does not ignore an authoritative completion fact just because the lesson cache already has completedAt", () => {
+  const imported = dispatchWeekUp(createEmptyWeekUpState(), { type: "learning-more.import", courses: [course], lessons: [lesson], facts: [], nextCursor: "cursor-1" }, context()).state;
+  const cacheOnlyCompleted = {
     ...imported,
     learningMoreLessons: imported.learningMoreLessons.map((item) => item.lessonId === lesson.lessonId
       ? { ...item, completedAt: "2026-07-21T09:00:00.000Z" }
@@ -69,5 +84,5 @@ test("ignores a repeated completion fact once the lesson is already completed", 
     occurredAt: "2026-07-21T09:00:00.000Z",
   };
 
-  assert.equal(createLearningMoreDelta(completed, { courses: [course], lessons: [lesson], facts: [fact], nextCursor: "cursor-1" }), undefined);
+  assert.deepEqual(createLearningMoreDelta(cacheOnlyCompleted, { courses: [course], lessons: [lesson], facts: [fact], nextCursor: "cursor-1" })?.facts, [fact]);
 });

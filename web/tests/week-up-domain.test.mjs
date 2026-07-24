@@ -795,6 +795,32 @@ test("reapplies an authoritative Learning MORE completion after its local comple
   assert.equal(totalXpForAttribute(state, attributeId), 2);
 });
 
+test("applies a repeated Learning MORE completion to the matching schedule item only", () => {
+  const h = harness();
+  let state = addAttribute(h, createEmptyWeekUpState());
+  const attributeId = state.attributes[0].id;
+  const course = { courseId: "course-repeat", title: "Token", status: "active" };
+  const lessons = [
+    { courseId: "course-repeat", lessonId: "lesson-repeat", scheduleItemId: "schedule-a", scheduledDate: "2026-07-23", title: "Token 01", order: 0 },
+    { courseId: "course-repeat", lessonId: "lesson-repeat", scheduleItemId: "schedule-b", scheduledDate: "2026-07-24", title: "Token 01", order: 1 },
+  ];
+  state = h.run(state, { type: "learning-more.import", courses: [course], lessons, facts: [] });
+  state = h.run(state, { type: "project.update", id: state.projects[0].id, patch: { rewardsPerUnit: [{ attributeId, amount: 1 }] } });
+
+  state = h.run(state, {
+    type: "learning-more.import",
+    facts: [{ factId: "fact-schedule-b", type: "lesson-completed", occurredAt: "2026-07-24T10:00:00+08:00", courseId: "course-repeat", lessonId: "lesson-repeat", scheduleItemId: "schedule-b" }],
+  });
+
+  const planA = state.plans.find((plan) => plan.sourceRef === "learning-more:schedule-a");
+  const planB = state.plans.find((plan) => plan.sourceRef === "learning-more:schedule-b");
+  assert.ok(planA);
+  assert.ok(planB);
+  assert.equal(state.completionFacts.some((fact) => fact.planId === planA.id && fact.revertedAt === undefined), false);
+  assert.equal(state.completionFacts.some((fact) => fact.planId === planB.id && fact.revertedAt === undefined), true);
+  assert.equal(totalXpForAttribute(state, attributeId), 1);
+});
+
 test("completes a segmented plan only after every segment and awards XP once", () => {
   const h = harness();
   let state = addAttribute(h, createEmptyWeekUpState());

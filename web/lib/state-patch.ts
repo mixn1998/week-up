@@ -19,7 +19,10 @@ type MutablePatchFields = { -readonly [K in "schemaVersion" | "preferences" | "l
 
 function entityId(key: CollectionKey, entity: StateEntity): string {
   if (key === "learningMoreCourses") return (entity as WeekUpState["learningMoreCourses"][number]).courseId;
-  if (key === "learningMoreLessons") return (entity as WeekUpState["learningMoreLessons"][number]).lessonId;
+  if (key === "learningMoreLessons") {
+    const lesson = entity as WeekUpState["learningMoreLessons"][number];
+    return lesson.scheduleItemId || lesson.lessonId;
+  }
   return (entity as { id: string }).id;
 }
 
