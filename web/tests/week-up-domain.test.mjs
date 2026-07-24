@@ -476,6 +476,57 @@ test("removes an unfinished Learning MORE plan when its lesson leaves the timeta
   assert.deepEqual(state.learningMoreLessons, []);
 });
 
+test("keeps distinct Learning MORE schedule items even when lesson id or title repeats", () => {
+  const h = harness();
+  const course = { courseId: "c1", title: "Token Course", status: "active" };
+  const lessons = [
+    { courseId: "c1", lessonId: "l-token", scheduleItemId: "s-token-a", scheduledDate: "2026-07-24", title: "Token 01", objective: "first objective", order: 0 },
+    { courseId: "c1", lessonId: "l-token", scheduleItemId: "s-token-b", scheduledDate: "2026-07-25", title: "Token 01", objective: "second objective", order: 1 },
+  ];
+
+  const state = h.run(createEmptyWeekUpState(), { type: "learning-more.import", courses: [course], lessons, facts: [] });
+
+  assert.equal(state.learningMoreLessons.length, 2);
+  assert.equal(state.plans.length, 2);
+  assert.deepEqual(state.plans.map((plan) => [plan.sourceRef, plan.detail]), [
+    ["learning-more:s-token-a", "first objective"],
+    ["learning-more:s-token-b", "second objective"],
+  ]);
+});
+
+test("refreshes Learning MORE timetable by schedule item without deleting another repeated lesson", () => {
+  const h = harness();
+  const course = { courseId: "c1", title: "Travel Course", status: "active" };
+  let state = h.run(createEmptyWeekUpState(), {
+    type: "learning-more.import",
+    courses: [course],
+    lessons: [
+      { courseId: "c1", lessonId: "l-repeat", scheduleItemId: "s-old", scheduledDate: "2026-07-24", title: "Route 02", objective: "old row", order: 0 },
+      { courseId: "c1", lessonId: "l-repeat", scheduleItemId: "s-keep", scheduledDate: "2026-07-25", title: "Route 02", objective: "kept row", order: 1 },
+    ],
+    facts: [],
+  });
+
+  state = h.run(state, {
+    type: "learning-more.import",
+    lessons: [
+      { courseId: "c1", lessonId: "l-repeat", scheduleItemId: "s-keep", scheduledDate: "2026-07-25", title: "Route 02", objective: "kept row updated", order: 0 },
+      { courseId: "c1", lessonId: "l-repeat", scheduleItemId: "s-new", scheduledDate: "2026-07-26", title: "Route 02", objective: "new row", order: 1 },
+    ],
+    removedLessonIds: ["l-repeat"],
+    removedScheduleItemIds: ["s-old"],
+    facts: [],
+    incremental: true,
+  });
+
+  const active = state.plans.filter((plan) => plan.source === "learning-more" && plan.removedAt === undefined);
+  assert.deepEqual(active.map((plan) => [plan.sourceRef, plan.detail]).sort(), [
+    ["learning-more:s-keep", "kept row updated"],
+    ["learning-more:s-new", "new row"],
+  ]);
+  assert.ok(state.plans.find((plan) => plan.sourceRef === "learning-more:s-old")?.removedAt);
+});
+
 test("records completion exactly once and undo uses compensating XP", () => {
   const h = harness();
   let state = addAttribute(h, createEmptyWeekUpState());

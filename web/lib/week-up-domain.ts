@@ -282,7 +282,7 @@ export type WeekUpCommand =
   | { type: "ai-review.configure"; preferredProvider: AiProviderId; apiBaseUrl?: string; model?: string; reasoningEffort?: string }
   | { type: "learning-more.configure"; baseUrl: string }
   | { type: "learning-more.failed"; message: string }
-  | { type: "learning-more.import"; courses?: readonly LearningMoreCourseItem[]; lessons?: readonly LearningMoreLessonItem[]; removedCourseIds?: readonly string[]; removedLessonIds?: readonly string[]; facts: readonly LearningMoreFact[]; nextCursor?: string; incremental?: boolean };
+  | { type: "learning-more.import"; courses?: readonly LearningMoreCourseItem[]; lessons?: readonly LearningMoreLessonItem[]; removedCourseIds?: readonly string[]; removedLessonIds?: readonly string[]; removedScheduleItemIds?: readonly string[]; facts: readonly LearningMoreFact[]; nextCursor?: string; incremental?: boolean };
 
 export type DomainContext = Readonly<{ now(): string; id(prefix: string): string }>;
 export type CommandOutcome = Readonly<{ state: WeekUpState; changed: boolean; entityId?: string }>;
@@ -497,6 +497,14 @@ function unchanged(state: WeekUpState, entityId?: string): CommandOutcome {
 
 function activeCompletion(state: WeekUpState, planId: string): CompletionFact | undefined {
   return state.completionFacts.find((fact) => fact.planId === planId && fact.revertedAt === undefined);
+}
+
+function learningMoreScheduleKey(value: Pick<LearningMoreLesson, "lessonId" | "scheduleItemId"> | Pick<LearningMoreLessonItem, "lessonId" | "scheduleItemId">): string {
+  return value.scheduleItemId || value.lessonId;
+}
+
+function learningMoreSourceRef(scheduleItemId: string): string {
+  return `learning-more:${scheduleItemId}`;
 }
 
 function localDate(instant: string): string {
@@ -1279,11 +1287,13 @@ export function dispatchWeekUp(state: WeekUpState, command: WeekUpCommand, conte
         didChange = true;
       }
       if (command.lessons !== undefined) {
+        const removedScheduleRefs = new Set((command.removedScheduleItemIds ?? []).map((item) => learningMoreSourceRef(item)));
+        const canRemoveByLessonId = removedScheduleRefs.size === 0;
         const removedLessonIds = command.incremental
           ? new Set(command.removedLessonIds ?? [])
-          : new Set(next.learningMoreLessons.filter((lesson) => !command.lessons!.some((incoming) => incoming.lessonId === lesson.lessonId)).map((lesson) => lesson.lessonId));
+          : new Set(next.learningMoreLessons.filter((lesson) => !command.lessons!.some((incoming) => learningMoreScheduleKey(incoming) === learningMoreScheduleKey(lesson))).map((lesson) => lesson.lessonId));
         const incomingLessons: LearningMoreLesson[] = command.lessons.map((item) => {
-          const existing = next.learningMoreLessons.find((lesson) => lesson.lessonId === item.lessonId);
+          const existing = next.learningMoreLessons.find((lesson) => learningMoreScheduleKey(lesson) === learningMoreScheduleKey(item));
           return {
             courseId: item.courseId,
             lessonId: item.lessonId,
@@ -1297,15 +1307,17 @@ export function dispatchWeekUp(state: WeekUpState, command: WeekUpCommand, conte
           };
         });
         const lessons = command.incremental
-          ? [...next.learningMoreLessons.filter((lesson) => !removedLessonIds.has(lesson.lessonId) && !incomingLessons.some((incoming) => incoming.lessonId === lesson.lessonId)), ...incomingLessons]
+          ? [...next.learningMoreLessons.filter((lesson) => !removedScheduleRefs.has(learningMoreSourceRef(lesson.scheduleItemId)) && !(canRemoveByLessonId && removedLessonIds.has(lesson.lessonId)) && !incomingLessons.some((incoming) => learningMoreScheduleKey(incoming) === learningMoreScheduleKey(lesson))), ...incomingLessons]
           : incomingLessons;
-        let plans = next.plans.map((plan): PlanRecord => plan.source === "learning-more" && plan.sourceLessonId && removedLessonIds.has(plan.sourceLessonId) && activeCompletion(next, plan.id) === undefined && plan.removedAt === undefined
+        let plans = next.plans.map((plan): PlanRecord => plan.source === "learning-more" && ((plan.sourceRef && removedScheduleRefs.has(plan.sourceRef)) || (canRemoveByLessonId && plan.sourceLessonId && removedLessonIds.has(plan.sourceLessonId))) && activeCompletion(next, plan.id) === undefined && plan.removedAt === undefined
           ? { ...plan, removedAt: now, updatedAt: now }
           : plan);
         for (const lesson of lessons) {
           const project = next.projects.find((item) => item.source === "learning-more" && item.sourceCourseId === lesson.courseId && item.archivedAt === undefined);
           if (!project) continue;
-          const existing = [...plans].reverse().find((plan) => plan.source === "learning-more" && plan.sourceLessonId === lesson.lessonId);
+          const sourceRef = learningMoreSourceRef(lesson.scheduleItemId);
+          const existing = [...plans].reverse().find((plan) => plan.source === "learning-more" && plan.sourceRef === sourceRef)
+            ?? [...plans].reverse().find((plan) => plan.source === "learning-more" && plan.sourceLessonId === lesson.lessonId && plan.sourceRef === undefined);
           if (existing && activeCompletion(next, existing.id)) continue;
           const keepsDate = existing !== undefined && localDate(existing.startAt) === lesson.scheduledDate;
           const startAt = keepsDate ? existing.startAt : `${lesson.scheduledDate}T00:00:00+08:00`;
@@ -1329,7 +1341,8 @@ export function dispatchWeekUp(state: WeekUpState, command: WeekUpCommand, conte
               unitKind: "lesson",
               unitQuantity: 1,
               sourceCourseId: lesson.courseId,
-              sourceRef: `learning-more:${lesson.scheduleItemId}`,
+              sourceRef,
+              sourceLessonId: lesson.lessonId,
               updatedAt: now,
             };
             plans = plans.map((plan) => plan.id === existing.id ? updated : plan);
@@ -1352,7 +1365,7 @@ export function dispatchWeekUp(state: WeekUpState, command: WeekUpCommand, conte
               unitKind: "lesson",
               unitQuantity: 1,
               source: "learning-more",
-              sourceRef: `learning-more:${lesson.scheduleItemId}`,
+              sourceRef,
               sourceLessonId: lesson.lessonId,
               sourceCourseId: lesson.courseId,
               createdAt: now,
@@ -1363,12 +1376,14 @@ export function dispatchWeekUp(state: WeekUpState, command: WeekUpCommand, conte
         next = { ...next, learningMoreLessons: lessons, plans };
         didChange = true;
       }
-      if (command.incremental && command.lessons === undefined && command.removedLessonIds?.length) {
+      if (command.incremental && command.lessons === undefined && ((command.removedLessonIds?.length ?? 0) > 0 || (command.removedScheduleItemIds?.length ?? 0) > 0)) {
         const removedLessonIds = new Set(command.removedLessonIds);
+        const removedScheduleRefs = new Set((command.removedScheduleItemIds ?? []).map((item) => learningMoreSourceRef(item)));
+        const canRemoveByLessonId = removedScheduleRefs.size === 0;
         next = {
           ...next,
-          learningMoreLessons: next.learningMoreLessons.filter((lesson) => !removedLessonIds.has(lesson.lessonId)),
-          plans: next.plans.map((plan): PlanRecord => plan.source === "learning-more" && plan.sourceLessonId && removedLessonIds.has(plan.sourceLessonId) && activeCompletion(next, plan.id) === undefined && plan.removedAt === undefined ? { ...plan, removedAt: now, updatedAt: now } : plan),
+          learningMoreLessons: next.learningMoreLessons.filter((lesson) => !removedScheduleRefs.has(learningMoreSourceRef(lesson.scheduleItemId)) && !(canRemoveByLessonId && removedLessonIds.has(lesson.lessonId))),
+          plans: next.plans.map((plan): PlanRecord => plan.source === "learning-more" && ((plan.sourceRef && removedScheduleRefs.has(plan.sourceRef)) || (canRemoveByLessonId && plan.sourceLessonId && removedLessonIds.has(plan.sourceLessonId))) && activeCompletion(next, plan.id) === undefined && plan.removedAt === undefined ? { ...plan, removedAt: now, updatedAt: now } : plan),
         };
         didChange = true;
       }

@@ -27,6 +27,32 @@ test("emits only changed and removed Learning MORE records", () => {
   assert.equal(delta?.incremental, true);
 });
 
+test("diffs Learning MORE lessons by schedule item so repeated lesson ids can be rescheduled", () => {
+  const imported = dispatchWeekUp(createEmptyWeekUpState(), {
+    type: "learning-more.import",
+    courses: [course],
+    lessons: [
+      { ...lesson, lessonId: "same-lesson", scheduleItemId: "schedule-old", objective: "old" },
+      { ...lesson, lessonId: "same-lesson", scheduleItemId: "schedule-keep", objective: "keep", order: 1 },
+    ],
+    facts: [],
+    nextCursor: "cursor-1",
+  }, context()).state;
+  const delta = createLearningMoreDelta(imported, {
+    courses: [course],
+    lessons: [
+      { ...lesson, lessonId: "same-lesson", scheduleItemId: "schedule-keep", objective: "keep updated", order: 0 },
+      { ...lesson, lessonId: "same-lesson", scheduleItemId: "schedule-new", objective: "new", order: 1 },
+    ],
+    facts: [],
+    nextCursor: "cursor-1",
+  });
+
+  assert.deepEqual(delta?.removedScheduleItemIds, ["schedule-old"]);
+  assert.deepEqual(delta?.removedLessonIds, ["same-lesson"]);
+  assert.deepEqual(delta?.lessons?.map((item) => [item.scheduleItemId, item.objective]), [["schedule-keep", "keep updated"], ["schedule-new", "new"]]);
+});
+
 test("ignores a repeated completion fact once the lesson is already completed", () => {
   const imported = dispatchWeekUp(createEmptyWeekUpState(), { type: "learning-more.import", courses: [course], lessons: [lesson], facts: [], nextCursor: "cursor-1" }, context()).state;
   const completed = {
