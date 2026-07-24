@@ -821,6 +821,27 @@ test("applies a repeated Learning MORE completion to the matching schedule item 
   assert.equal(totalXpForAttribute(state, attributeId), 1);
 });
 
+test("ignores authoritative Learning MORE completion for a permanently removed mirror plan", () => {
+  const h = harness();
+  let state = addAttribute(h, createEmptyWeekUpState());
+  const attributeId = state.attributes[0].id;
+  const course = { courseId: "course-removed", title: "已移除课程", status: "active" };
+  const lesson = { courseId: "course-removed", lessonId: "lesson-removed", scheduleItemId: "schedule-removed", scheduledDate: "2026-07-23", title: "被移除课节", order: 0 };
+  state = h.run(state, { type: "learning-more.import", courses: [course], lessons: [lesson], facts: [] });
+  state = h.run(state, { type: "project.update", id: state.projects[0].id, patch: { rewardsPerUnit: [{ attributeId, amount: 1 }] } });
+  const planId = state.plans[0].id;
+  state = { ...state, plans: state.plans.map((plan) => plan.id === planId ? { ...plan, removedAt: "2026-07-23T12:00:00+08:00" } : plan) };
+
+  state = h.run(state, {
+    type: "learning-more.import",
+    facts: [{ factId: "fact-removed", type: "lesson-completed", occurredAt: "2026-07-23T20:00:00+08:00", courseId: "course-removed", lessonId: "lesson-removed", scheduleItemId: "schedule-removed" }],
+  });
+
+  assert.equal(state.completionFacts.some((fact) => fact.externalFactId === "fact-removed"), false);
+  assert.equal(totalXpForAttribute(state, attributeId), 0);
+  assert.equal(state.learningMoreLessons.find((item) => item.scheduleItemId === "schedule-removed")?.completedAt, "2026-07-23T20:00:00+08:00");
+});
+
 test("completes a segmented plan only after every segment and awards XP once", () => {
   const h = harness();
   let state = addAttribute(h, createEmptyWeekUpState());

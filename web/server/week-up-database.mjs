@@ -22,6 +22,18 @@ function deterministicContext(eventId, occurredAt) {
   };
 }
 
+function canSkipDeletedPlanReplayError(error, command) {
+  if (!(error instanceof Error) || error.message !== "plan_not_found") return false;
+  return [
+    "plan.complete",
+    "plan.undo",
+    "plan.segment.complete",
+    "plan.segment.undo",
+    "plan.update",
+    "plan.remove",
+  ].includes(command?.type);
+}
+
 export async function createWeekUpDatabase(databasePath) {
   await mkdir(dirname(databasePath), { recursive: true });
   const database = new DatabaseSync(databasePath);
@@ -78,15 +90,21 @@ export async function createWeekUpDatabase(databasePath) {
     const snapshot = database.prepare("SELECT revision, state_json FROM week_up_snapshots ORDER BY revision DESC LIMIT 1").get();
     let state = parseState(snapshot.state_json);
     const events = database.prepare(`
-      SELECT event_id, occurred_at, command_json
+      SELECT event_id, result_revision, occurred_at, command_json
       FROM week_up_events
       WHERE changed = 1 AND result_revision > ?
       ORDER BY sequence ASC
     `).all(snapshot.revision);
     for (const event of events) {
-      const outcome = dispatchWeekUp(state, JSON.parse(event.command_json), deterministicContext(event.event_id, event.occurred_at));
-      if (!outcome.changed) throw new Error(`event_replay_failed:${event.event_id}`);
-      state = outcome.state;
+      const command = JSON.parse(event.command_json);
+      try {
+        const outcome = dispatchWeekUp(state, command, deterministicContext(event.event_id, event.occurred_at));
+        if (!outcome.changed) throw new Error(`event_replay_failed:${event.event_id}`);
+        state = outcome.state;
+      } catch (error) {
+        if (!canSkipDeletedPlanReplayError(error, command)) throw error;
+        state = { ...state, revision: event.result_revision };
+      }
     }
     return state;
   }

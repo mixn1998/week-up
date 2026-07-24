@@ -1418,15 +1418,15 @@ export function dispatchWeekUp(state: WeekUpState, command: WeekUpCommand, conte
           didChange = true;
         }
         const candidatePlans = [...next.plans]
-          .filter((item) => item.source === "learning-more" && (factSourceRef ? item.sourceRef === factSourceRef : item.sourceLessonId === fact.lessonId))
+          .filter((item) => item.removedAt === undefined && item.source === "learning-more" && (factSourceRef ? item.sourceRef === factSourceRef : item.sourceLessonId === fact.lessonId))
           .sort((left, right) => Math.abs(Date.parse(left.startAt) - Date.parse(fact.occurredAt)) - Math.abs(Date.parse(right.startAt) - Date.parse(fact.occurredAt)) || left.startAt.localeCompare(right.startAt));
         const plan = candidatePlans.find((item) => item.overdueRescheduledPlanId === undefined && activeCompletion(next, item.id) === undefined)
           ?? candidatePlans[0]
           ?? [...next.plans]
-            .filter((item) => item.source === "learning-more" && item.sourceLessonId === fact.lessonId)
+            .filter((item) => item.removedAt === undefined && item.source === "learning-more" && item.sourceLessonId === fact.lessonId)
             .sort((left, right) => Math.abs(Date.parse(left.startAt) - Date.parse(fact.occurredAt)) - Math.abs(Date.parse(right.startAt) - Date.parse(fact.occurredAt)) || left.startAt.localeCompare(right.startAt))
             .find((item) => item.overdueRescheduledPlanId === undefined && activeCompletion(next, item.id) === undefined)
-          ?? next.plans.find((item) => item.source === "learning-more" && item.sourceLessonId === fact.lessonId);
+          ?? next.plans.find((item) => item.removedAt === undefined && item.source === "learning-more" && item.sourceLessonId === fact.lessonId);
         if (!plan) continue;
         const actualStart = fact.actualStartedAt;
         const actualEnd = fact.actualEndedAt;

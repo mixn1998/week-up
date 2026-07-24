@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 
 import { createWeekUpDatabase, maintainBackups } from "../server/week-up-database.mjs";
@@ -33,6 +34,25 @@ test("makes command ids idempotent and rejects stale revisions", async (t) => {
   const duplicate = store.dispatch(attributeCommand, { expectedRevision: 0, commandId: "command-1", occurredAt: "2026-07-20T08:00:00.000Z" });
   assert.equal(duplicate.attributes.length, 1);
   assert.throws(() => store.dispatch(attributeCommand, { expectedRevision: 0, commandId: "command-2", occurredAt: "2026-07-20T08:01:00.000Z" }), /revision_conflict/);
+  store.close();
+});
+
+test("replays past completion events for permanently removed plans as inert history", async (t) => {
+  const files = await fixture(t);
+  let store = await createWeekUpDatabase(files.path);
+  store.dispatch(attributeCommand, { expectedRevision: 0, commandId: "command-1", occurredAt: "2026-07-20T08:00:00.000Z" });
+  store.close();
+
+  const database = new DatabaseSync(files.path);
+  database.prepare(`
+    INSERT INTO week_up_events(event_id, expected_revision, result_revision, occurred_at, command_json, changed)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `).run("legacy-complete-deleted-plan", 1, 2, "2026-07-20T09:00:00.000Z", JSON.stringify({ type: "plan.complete", id: "deleted-plan" }), 1);
+  database.close();
+
+  store = await createWeekUpDatabase(files.path);
+  assert.equal(store.load().revision, 2);
+  assert.equal(store.load().attributes.length, 1);
   store.close();
 });
 
