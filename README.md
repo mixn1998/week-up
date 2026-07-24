@@ -161,6 +161,14 @@ npm run dev
 npm run start
 ```
 
+### Start automatically after Windows login
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\install-week-up-autostart.ps1
+```
+
+安装脚本会为当前 Windows 用户创建登录启动任务，并由隐藏的守护脚本保持本地服务运行。唯一访问入口为 `http://127.0.0.1:4173/`，正式数据仍保存在 `%LOCALAPPDATA%\Week UP`。
+
 ## Privacy and sanitized data
 
 这个仓库只包含产品源码、测试、非敏感文档和资产。导出时有意排除了：
