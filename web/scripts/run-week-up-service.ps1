@@ -39,8 +39,13 @@ $env:WEEK_UP_DATA_DIR = $localDataRoot
 try {
   Push-Location $ProjectRoot
   "[$(Get-Date -Format o)] Starting Week UP on http://127.0.0.1:4173/" | Add-Content -LiteralPath $logPath -Encoding utf8
+  # Windows PowerShell converts a native process' stderr into ErrorRecord
+  # objects. With Stop enabled, a recoverable console.error from the long-lived
+  # Node service would terminate this watchdog even while Node was healthy.
+  $ErrorActionPreference = "Continue"
   & $nodeExe $serverPath *>> $logPath
   $nodeExitCode = $LASTEXITCODE
+  $ErrorActionPreference = "Stop"
   "[$(Get-Date -Format o)] Week UP stopped with exit code $nodeExitCode" | Add-Content -LiteralPath $logPath -Encoding utf8
   if ($nodeExitCode -eq 0) {
     exit 1
