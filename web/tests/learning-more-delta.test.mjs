@@ -115,3 +115,35 @@ test("re-emits a known Learning MORE fact when its schedule item points to a dif
 
   assert.deepEqual(createLearningMoreDelta(imported, { courses: [course], lessons: [scheduleA, scheduleB], facts: [correctedFact], nextCursor: "cursor-1" })?.facts, [correctedFact]);
 });
+
+test("does not rewrite a completed schedule item when calendar and history use different fact ids", () => {
+  const imported = dispatchWeekUp(createEmptyWeekUpState(), {
+    type: "learning-more.import",
+    courses: [course],
+    lessons: [lesson],
+    facts: [{
+      type: "lesson-completed",
+      factId: "history-fact-1",
+      courseId: course.courseId,
+      lessonId: lesson.lessonId,
+      occurredAt: "2026-07-21T09:00:00.000Z",
+      scheduleItemId: lesson.scheduleItemId,
+    }],
+    nextCursor: "cursor-1",
+  }, context()).state;
+  const calendarAlias = {
+    type: "lesson-completed",
+    factId: "calendar-completed:2026-07-21:lesson-1",
+    courseId: course.courseId,
+    lessonId: lesson.lessonId,
+    occurredAt: "2026-07-21T12:00:00+08:00",
+    scheduleItemId: lesson.scheduleItemId,
+  };
+
+  assert.equal(createLearningMoreDelta(imported, {
+    courses: [course],
+    lessons: [lesson],
+    facts: [calendarAlias],
+    nextCursor: "cursor-1",
+  }), undefined);
+});

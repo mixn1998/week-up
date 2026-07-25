@@ -66,11 +66,21 @@ function activeExternalFactsById(facts: readonly CompletionFact[]): Map<string, 
 function hasMatchingActiveLessonFact(state: WeekUpState, activeFacts: Map<string, Set<string>>, fact: LearningMoreFact): boolean {
   if (fact.type !== "lesson-completed") return false;
   const planIds = activeFacts.get(fact.factId);
-  if (!planIds) return false;
-  if (!fact.scheduleItemId) return true;
+  if (!fact.scheduleItemId) return planIds !== undefined;
   const targetRef = `learning-more:${fact.scheduleItemId}`;
   const targetPlan = state.plans.find((plan) => plan.source === "learning-more" && plan.sourceRef === targetRef && plan.removedAt === undefined);
-  return targetPlan !== undefined && planIds.has(targetPlan.id);
+  if (!targetPlan) return false;
+  if (planIds?.has(targetPlan.id)) return true;
+  // The paged history and calendar endpoints can assign different fact ids to
+  // the same completed schedule occurrence. Once that plan has authoritative
+  // Learning MORE provenance, a calendar alias must not create a new event
+  // every poll. A manual completion has no externalFactId and still flows
+  // through so the authoritative provenance can be attached.
+  return state.completionFacts.some((completion) =>
+    completion.planId === targetPlan.id
+    && completion.revertedAt === undefined
+    && completion.externalFactId !== undefined
+  );
 }
 
 export function createLearningMoreDelta(state: WeekUpState, batch: LearningMoreImportBatch): LearningMoreDelta | undefined {
