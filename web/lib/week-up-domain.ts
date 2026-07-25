@@ -283,7 +283,8 @@ export type WeekUpCommand =
   | { type: "ai-review.configure"; preferredProvider: AiProviderId; apiBaseUrl?: string; model?: string; reasoningEffort?: string }
   | { type: "learning-more.configure"; baseUrl: string }
   | { type: "learning-more.failed"; message: string }
-  | { type: "learning-more.import"; courses?: readonly LearningMoreCourseItem[]; lessons?: readonly LearningMoreLessonItem[]; removedCourseIds?: readonly string[]; removedLessonIds?: readonly string[]; removedScheduleItemIds?: readonly string[]; facts: readonly LearningMoreFact[]; nextCursor?: string; incremental?: boolean };
+  | { type: "learning-more.import"; courses?: readonly LearningMoreCourseItem[]; lessons?: readonly LearningMoreLessonItem[]; removedCourseIds?: readonly string[]; removedLessonIds?: readonly string[]; removedScheduleItemIds?: readonly string[]; facts: readonly LearningMoreFact[]; nextCursor?: string; incremental?: boolean }
+  | { type: "xp.recalculate-from-templates" };
 
 export type DomainContext = Readonly<{ now(): string; id(prefix: string): string }>;
 export type CommandOutcome = Readonly<{ state: WeekUpState; changed: boolean; entityId?: string }>;
@@ -508,6 +509,10 @@ function learningMoreSourceRef(scheduleItemId: string): string {
   return `learning-more:${scheduleItemId}`;
 }
 
+function isLearningMoreHistorySourceRef(sourceRef: string | undefined): boolean {
+  return sourceRef?.startsWith("learning-more:history:") === true;
+}
+
 function localDate(instant: string): string {
   return new Date(Date.parse(instant) + 8 * 3_600_000).toISOString().slice(0, 10);
 }
@@ -632,6 +637,176 @@ function revertPlanCompletionInState(state: WeekUpState, planId: string, context
   };
 }
 
+function netRewardsForFact(state: WeekUpState, factId: string): AttributeReward[] {
+  const totals = new Map<string, number>();
+  for (const transaction of state.xpTransactions.filter((item) => item.completionFactId === factId)) {
+    totals.set(transaction.attributeId, roundReward((totals.get(transaction.attributeId) ?? 0) + transaction.amount));
+  }
+  return [...totals.entries()]
+    .filter(([, amount]) => amount !== 0)
+    .map(([attributeId, amount]) => ({ attributeId, amount }));
+}
+
+function rewardDiff(current: readonly AttributeReward[], target: readonly AttributeReward[]): AttributeReward[] {
+  const attributeIds = new Set([...current.map((item) => item.attributeId), ...target.map((item) => item.attributeId)]);
+  return [...attributeIds].map((attributeId) => {
+    const currentAmount = current.find((item) => item.attributeId === attributeId)?.amount ?? 0;
+    const targetAmount = target.find((item) => item.attributeId === attributeId)?.amount ?? 0;
+    return { attributeId, amount: roundReward(targetAmount - currentAmount) };
+  }).filter((item) => item.amount !== 0);
+}
+
+function templateRewardsForCompletedPlan(state: WeekUpState, plan: PlanRecord): AttributeReward[] | undefined {
+  if (plan.rewardMode === "custom") return undefined;
+  if (plan.templateKind !== "project" || !plan.projectId) return plan.rewardMode === "none" ? [] : plan.rewards.map((reward) => ({ ...reward }));
+  const project = state.projects.find((item) => item.id === plan.projectId);
+  if (!project) return undefined;
+  if (project.rewardsPerUnit.length === 0) return [];
+  return rewardsForProject(project, plan.startAt, plan.endAt, project.unit === "hour" ? undefined : plan.unitQuantity, plan.timeSegments).rewards;
+}
+
+function recalculateXpFromTemplates(state: WeekUpState, context: DomainContext, now: string): WeekUpState {
+  let next = state;
+  const plans = [...next.plans];
+  const activePlans = new Map(plans.filter((plan) => plan.removedAt === undefined).map((plan) => [plan.id, plan]));
+  const completionFacts = [...next.completionFacts];
+  const xpTransactions = [...next.xpTransactions];
+  let changedAny = false;
+  for (let index = 0; index < completionFacts.length; index += 1) {
+    const fact = completionFacts[index];
+    if (fact.revertedAt !== undefined) continue;
+    const plan = activePlans.get(fact.planId);
+    if (!plan) {
+      const compensation = netRewardsForFact({ ...next, completionFacts, xpTransactions }, fact.id).map<XpTransaction>((reward) => ({
+        id: context.id("xp"),
+        attributeId: reward.attributeId,
+        amount: -reward.amount,
+        occurredAt: now,
+        kind: "compensation",
+        completionFactId: fact.id,
+      }));
+      completionFacts[index] = { ...fact, revertedAt: now };
+      xpTransactions.push(...compensation);
+      changedAny = true;
+      continue;
+    }
+    const targetRewards = templateRewardsForCompletedPlan(next, plan);
+    if (targetRewards === undefined) continue;
+    const planIndex = plans.findIndex((item) => item.id === plan.id);
+    if (planIndex >= 0 && !rewardsEqual(plans[planIndex].rewards, targetRewards)) {
+      plans[planIndex] = { ...plans[planIndex], rewards: targetRewards.map((reward) => ({ ...reward })), updatedAt: now };
+      changedAny = true;
+    }
+    const currentNet = netRewardsForFact({ ...next, completionFacts, xpTransactions }, fact.id);
+    const diff = rewardDiff(currentNet, targetRewards);
+    if (!rewardsEqual(fact.rewardSnapshot, targetRewards)) {
+      completionFacts[index] = { ...fact, rewardSnapshot: targetRewards.map((reward) => ({ ...reward })) };
+      changedAny = true;
+    }
+    if (diff.length > 0) {
+      xpTransactions.push(...diff.map<XpTransaction>((reward) => ({
+        id: context.id("xp"),
+        attributeId: reward.attributeId,
+        amount: reward.amount,
+        occurredAt: now,
+        kind: "compensation",
+        completionFactId: fact.id,
+      })));
+      changedAny = true;
+    }
+  }
+  if (!changedAny) return next;
+  next = { ...next, plans, completionFacts, xpTransactions };
+  return refreshSettlementsAfterFactChanges(next, now);
+}
+
+function reconcileLearningMoreHistoryMirrors(state: WeekUpState, context: DomainContext, now: string): WeekUpState {
+  let next = state;
+  const formalLessons = next.learningMoreLessons.filter((lesson) => !lesson.scheduleItemId.startsWith("history:"));
+  for (const lesson of formalLessons) {
+    const formalRef = learningMoreSourceRef(lesson.scheduleItemId);
+    const formalPlan = next.plans.find((plan) => plan.removedAt === undefined && plan.source === "learning-more" && plan.sourceRef === formalRef);
+    if (!formalPlan) continue;
+    const historyPlans = next.plans.filter((plan) =>
+      plan.removedAt === undefined &&
+      plan.source === "learning-more" &&
+      plan.sourceLessonId === lesson.lessonId &&
+      isLearningMoreHistorySourceRef(plan.sourceRef) &&
+      localDate(plan.startAt) === lesson.scheduledDate
+    );
+    for (const historyPlan of historyPlans) {
+      const historyCompletion = activeCompletion(next, historyPlan.id);
+      const formalCompletion = activeCompletion(next, formalPlan.id);
+      if (historyCompletion && !formalCompletion) {
+        next = revertPlanCompletionInState(next, historyPlan.id, context, now);
+        const outcome = completePlan(next, formalPlan.id, context, {
+          source: "learning-more",
+          externalFactId: historyCompletion.externalFactId,
+          completedAt: historyCompletion.completedAt,
+        });
+        if (outcome.changed) next = outcome.state;
+      } else if (historyCompletion && formalCompletion) {
+        next = revertPlanCompletionInState(next, historyPlan.id, context, now);
+      }
+      next = {
+        ...next,
+        plans: next.plans.map((plan) => plan.id === historyPlan.id ? { ...plan, removedAt: now, updatedAt: now } : plan),
+      };
+    }
+  }
+  return next;
+}
+
+function learningMoreDuplicatePlanKey(plan: PlanRecord): string | undefined {
+  if (plan.source !== "learning-more" || plan.removedAt !== undefined) return undefined;
+  if (plan.sourceRef && !isLearningMoreHistorySourceRef(plan.sourceRef) && !plan.sourceRef.startsWith("week-up:")) return `source-ref:${plan.sourceRef}`;
+  if (!plan.sourceLessonId) return undefined;
+  return `lesson-time:${plan.sourceCourseId ?? ""}:${plan.sourceLessonId}:${localDate(plan.startAt)}:${plan.startAt}:${plan.endAt}:${plan.title}`;
+}
+
+function chooseLearningMorePlanToKeep(state: WeekUpState, plans: readonly PlanRecord[]): PlanRecord {
+  const withCompletion = plans.find((plan) => activeCompletion(state, plan.id) !== undefined);
+  if (withCompletion) return withCompletion;
+  const formal = plans.find((plan) => plan.sourceRef && !isLearningMoreHistorySourceRef(plan.sourceRef) && !plan.sourceRef.startsWith("week-up:"));
+  if (formal) return formal;
+  return [...plans].sort((left, right) => left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id))[0];
+}
+
+function removeDuplicateLearningMorePlans(state: WeekUpState, context: DomainContext, now: string): WeekUpState {
+  let next = state;
+  const groups = new Map<string, PlanRecord[]>();
+  for (const plan of next.plans) {
+    const key = learningMoreDuplicatePlanKey(plan);
+    if (!key) continue;
+    groups.set(key, [...(groups.get(key) ?? []), plan]);
+  }
+  for (const plans of groups.values()) {
+    if (plans.length < 2) continue;
+    const keep = chooseLearningMorePlanToKeep(next, plans);
+    const duplicates = plans.filter((plan) => plan.id !== keep.id);
+    for (const duplicate of duplicates) {
+      const duplicateCompletion = activeCompletion(next, duplicate.id);
+      const keepCompletion = activeCompletion(next, keep.id);
+      if (duplicateCompletion && !keepCompletion) {
+        next = revertPlanCompletionInState(next, duplicate.id, context, now);
+        const outcome = completePlan(next, keep.id, context, {
+          source: duplicateCompletion.source,
+          externalFactId: duplicateCompletion.externalFactId,
+          completedAt: duplicateCompletion.completedAt,
+        });
+        if (outcome.changed) next = outcome.state;
+      } else if (duplicateCompletion) {
+        next = revertPlanCompletionInState(next, duplicate.id, context, now);
+      }
+      next = {
+        ...next,
+        plans: next.plans.map((plan) => plan.id === duplicate.id ? { ...plan, removedAt: now, updatedAt: now } : plan),
+      };
+    }
+  }
+  return next;
+}
+
 export function dispatchWeekUp(state: WeekUpState, command: WeekUpCommand, context: DomainContext): CommandOutcome {
   const now = context.now();
   switch (command.type) {
@@ -742,7 +917,15 @@ export function dispatchWeekUp(state: WeekUpState, command: WeekUpCommand, conte
       assertNonEmpty(project.name, "project_name");
       validateRewards(state, project.rewardsPerUnit);
       const base = { ...state, projects: state.projects.map((item) => item.id === command.id ? project : item) };
-      return changed(state, { projectCategories: appendProjectCategory(state, category, context, now), projects: base.projects, plans: propagateProjectTemplate(base, project, now) }, command.id);
+      const recalculated = recalculateXpFromTemplates({ ...base, projectCategories: appendProjectCategory(state, category, context, now), plans: propagateProjectTemplate(base, project, now) }, context, now);
+      return changed(state, {
+        projectCategories: recalculated.projectCategories,
+        projects: recalculated.projects,
+        plans: recalculated.plans,
+        completionFacts: recalculated.completionFacts,
+        xpTransactions: recalculated.xpTransactions,
+        settlements: recalculated.settlements,
+      }, command.id);
     }
     case "project.archive": {
       const current = state.projects.find((item) => item.id === command.id);
@@ -1216,6 +1399,10 @@ export function dispatchWeekUp(state: WeekUpState, command: WeekUpCommand, conte
       if (settlement.harvest.status === "ready" || settlement.harvest.status === "pending") return unchanged(state, command.id);
       return changed(state, { settlements: state.settlements.map((item) => item.id === command.id ? { ...item, harvest: { status: "pending" } } : item) }, command.id);
     }
+    case "xp.recalculate-from-templates": {
+      const cleaned = recalculateXpFromTemplates(removeDuplicateLearningMorePlans(reconcileLearningMoreHistoryMirrors(state, context, now), context, now), context, now);
+      return cleaned === state ? unchanged(state) : { state: { ...cleaned, revision: state.revision + 1 }, changed: true };
+    }
     case "ai-review.configure": {
       const apiBaseUrl = (command.apiBaseUrl ?? state.aiReview.apiBaseUrl).trim().replace(/\/$/, "");
       return changed(state, { aiReview: { baseUrl: "/week-up-review-api", preferredProvider: command.preferredProvider, apiBaseUrl, ...(command.model ? { model: command.model } : {}), ...(command.reasoningEffort ? { reasoningEffort: command.reasoningEffort } : {}) } });
@@ -1452,9 +1639,27 @@ export function dispatchWeekUp(state: WeekUpState, command: WeekUpCommand, conte
               : item),
           };
         }
+        const duplicateExternal = fact.factId
+          ? next.completionFacts.find((item) => item.externalFactId === fact.factId && item.revertedAt === undefined)
+          : undefined;
+        if (duplicateExternal && duplicateExternal.planId !== plan.id) {
+          const duplicatePlan = next.plans.find((item) => item.id === duplicateExternal.planId);
+          if (duplicateExternal.source === "learning-more") {
+            next = revertPlanCompletionInState(next, duplicateExternal.planId, context, now);
+            if (isLearningMoreHistorySourceRef(duplicatePlan?.sourceRef) && duplicatePlan?.removedAt === undefined) {
+              next = {
+                ...next,
+                plans: next.plans.map((item) => item.id === duplicateExternal.planId ? { ...item, removedAt: now, updatedAt: now } : item),
+              };
+            }
+            didChange = true;
+          }
+        }
         const outcome = completePlan(next, plan.id, context, { source: "learning-more", externalFactId: fact.factId, completedAt: fact.occurredAt });
         if (outcome.changed) { next = outcome.state; didChange = true; }
       }
+      const cleaned = recalculateXpFromTemplates(removeDuplicateLearningMorePlans(reconcileLearningMoreHistoryMirrors(next, context, now), context, now), context, now);
+      if (cleaned !== next) { next = cleaned; didChange = true; }
       next = refreshSettlementsAfterFactChanges(next, now);
       const syncChanged = next.learningMore.historyCursor !== command.nextCursor || next.learningMore.lastSyncedAt !== now;
       if (syncChanged) {

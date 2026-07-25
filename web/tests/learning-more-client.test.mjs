@@ -102,3 +102,33 @@ test("keeps an unfinished past timetable item so Week UP can mark it overdue", a
   ]);
   assert.deepEqual(batch.facts, []);
 });
+
+test("emits separate completion facts for repeated Learning MORE schedule items with the same lesson id", async () => {
+  const fetcher = async (url) => {
+    const parsed = new URL(url);
+    if (parsed.pathname.endsWith("/home")) return Response.json({
+      generatedAt: "2026-07-25T02:00:00Z",
+      courses: [{ courseId: "course-ai", title: "AI", status: "active" }],
+      lessons: [{ courseId: "course-ai", lessonId: "lesson-token", title: "Token", objective: "理解 Token", progress: "completed", lastActivityAt: "2026-07-25T01:00:00Z" }],
+      schedule: [
+        { scheduleItemId: "schedule-token-a", courseId: "course-ai", lessonId: "lesson-token", startAt: "2026-07-24T10:00:00.000Z", endAt: "2026-07-24T10:40:00.000Z" },
+        { scheduleItemId: "schedule-token-b", courseId: "course-ai", lessonId: "lesson-token", startAt: "2026-07-25T01:00:00.000Z", endAt: "2026-07-25T01:40:00.000Z" },
+      ],
+    });
+    if (parsed.pathname.endsWith("/history/calendar")) return Response.json({
+      days: [
+        { localDate: "2026-07-24", completions: [{ lessonId: "lesson-token", courseId: "course-ai", actualSeconds: 2400 }] },
+        { localDate: "2026-07-25", completions: [{ lessonId: "lesson-token", courseId: "course-ai", actualSeconds: 2400 }] },
+      ],
+    });
+    return Response.json({ entries: [] });
+  };
+
+  const batch = await createLearningMoreClient("http://learning-more.local", fetcher).pull("latest-cursor");
+  const completedScheduleIds = batch.facts
+    .filter((fact) => fact.type === "lesson-completed")
+    .map((fact) => fact.scheduleItemId)
+    .sort();
+
+  assert.deepEqual(completedScheduleIds, ["schedule-token-a", "schedule-token-b"]);
+});

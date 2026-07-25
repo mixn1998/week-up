@@ -406,7 +406,7 @@ test("updates future recurrence members while preserving completed and manually 
   assert.equal(state.plans[4].rewards[0].amount, 3);
 });
 
-test("propagates project template changes only to unfinished followers", () => {
+test("propagates project template changes to unfinished followers and recalculates completed template XP", () => {
   const h = harness();
   let state = addAttribute(h, createEmptyWeekUpState());
   const attributeId = state.attributes[0].id;
@@ -419,10 +419,10 @@ test("propagates project template changes only to unfinished followers", () => {
   state = h.run(state, { type: "plan.complete", id: completedId });
   state = h.run(state, { type: "project.update", id: projectId, patch: { name: "现代舞", rewardsPerUnit: [{ attributeId, amount: 4 }] } });
   assert.equal(state.plans[0].title, "舞蹈 01");
-  assert.equal(state.plans[0].rewards[0].amount, 2);
+  assert.equal(state.plans[0].rewards[0].amount, 4);
   assert.equal(state.plans[1].title, "现代舞 02");
   assert.equal(state.plans[1].rewards[0].amount, 8);
-  assert.equal(totalXpForAttribute(state, attributeId), 2);
+  assert.equal(totalXpForAttribute(state, attributeId), 4);
   state = h.run(state, { type: "plan.update", id: followerId, patch: { rewards: [{ attributeId, amount: 9 }] } });
   assert.equal(state.plans[1].rewardMode, "custom");
   state = h.run(state, { type: "project.update", id: projectId, patch: { rewardsPerUnit: [{ attributeId, amount: 6 }] } });
@@ -451,9 +451,9 @@ test("imports scheduled Learning MORE lessons as time-unconfigured plans and app
   state = h.run(state, { type: "learning-more.import", facts: [{ factId: "f1", type: "lesson-completed", occurredAt: "2026-07-20T10:00:00+08:00", courseId: "c1", lessonId: "l1" }] });
   state = h.run(state, { type: "plan.update", id: state.plans[1].id, patch: { rewards: [{ attributeId, amount: 8 }] } });
   state = h.run(state, { type: "project.update", id: state.projects[0].id, patch: { rewardsPerUnit: [{ attributeId, amount: 5 }] } });
-  assert.equal(state.plans[0].rewards[0].amount, 3);
+  assert.equal(state.plans[0].rewards[0].amount, 5);
   assert.equal(state.plans[1].rewards[0].amount, 8);
-  assert.equal(totalXpForAttribute(state, attributeId), 3);
+  assert.equal(totalXpForAttribute(state, attributeId), 5);
   const nextLesson = { courseId: "c1", lessonId: "l3", scheduleItemId: "s3", scheduledDate: "2026-07-22", title: "第三节", objective: "综合练习", order: 2 };
   state = h.run(state, { type: "learning-more.import", courses: [{ courseId: "c1", title: "概率论", status: "active" }], lessons: [...lessons, nextLesson], facts: [] });
   assert.equal(state.plans[2].rewards[0].amount, 5);
@@ -819,6 +819,149 @@ test("applies a repeated Learning MORE completion to the matching schedule item 
   assert.equal(state.completionFacts.some((fact) => fact.planId === planA.id && fact.revertedAt === undefined), false);
   assert.equal(state.completionFacts.some((fact) => fact.planId === planB.id && fact.revertedAt === undefined), true);
   assert.equal(totalXpForAttribute(state, attributeId), 1);
+});
+
+test("moves a Learning MORE completion from a legacy history mirror to the matching schedule item", () => {
+  const h = harness();
+  let state = addAttribute(h, createEmptyWeekUpState());
+  const attributeId = state.attributes[0].id;
+  const course = { courseId: "course-token", title: "Token", status: "active" };
+  state = h.run(state, {
+    type: "learning-more.import",
+    courses: [course],
+    lessons: [{
+      courseId: "course-token",
+      lessonId: "lesson-token",
+      scheduleItemId: "history:2026-07-24:lesson-token",
+      scheduledDate: "2026-07-24",
+      title: "Token 01",
+      order: 0,
+    }],
+    facts: [],
+  });
+  state = h.run(state, { type: "project.update", id: state.projects[0].id, patch: { rewardsPerUnit: [{ attributeId, amount: 1 }] } });
+  state = h.run(state, {
+    type: "learning-more.import",
+    facts: [{ factId: "fact-token", type: "lesson-completed", occurredAt: "2026-07-24T10:00:00+08:00", courseId: "course-token", lessonId: "lesson-token" }],
+  });
+  const historyPlan = state.plans.find((plan) => plan.sourceRef === "learning-more:history:2026-07-24:lesson-token");
+  assert.ok(historyPlan);
+  assert.equal(state.completionFacts.some((fact) => fact.planId === historyPlan.id && fact.revertedAt === undefined), true);
+
+  state = h.run(state, {
+    type: "learning-more.import",
+    lessons: [{
+      courseId: "course-token",
+      lessonId: "lesson-token",
+      scheduleItemId: "schedule-token",
+      scheduledDate: "2026-07-24",
+      title: "Token 01",
+      order: 0,
+    }],
+    facts: [{ factId: "fact-token", type: "lesson-completed", occurredAt: "2026-07-24T10:00:00+08:00", courseId: "course-token", lessonId: "lesson-token", scheduleItemId: "schedule-token" }],
+  });
+
+  const schedulePlan = state.plans.find((plan) => plan.sourceRef === "learning-more:schedule-token");
+  const updatedHistoryPlan = state.plans.find((plan) => plan.id === historyPlan.id);
+  assert.ok(schedulePlan);
+  assert.ok(updatedHistoryPlan?.removedAt);
+  assert.equal(state.completionFacts.some((fact) => fact.planId === historyPlan.id && fact.revertedAt === undefined), false);
+  assert.equal(state.completionFacts.some((fact) => fact.planId === schedulePlan.id && fact.revertedAt === undefined), true);
+  assert.equal(totalXpForAttribute(state, attributeId), 1);
+});
+
+test("moves a Learning MORE completion even after the legacy mirror was compacted out of active plans", () => {
+  const h = harness();
+  let state = addAttribute(h, createEmptyWeekUpState());
+  const attributeId = state.attributes[0].id;
+  const course = { courseId: "course-token", title: "Token", status: "active" };
+  state = h.run(state, {
+    type: "learning-more.import",
+    courses: [course],
+    lessons: [{
+      courseId: "course-token",
+      lessonId: "lesson-token",
+      scheduleItemId: "history:2026-07-24:lesson-token",
+      scheduledDate: "2026-07-24",
+      title: "Token 01",
+      order: 0,
+    }],
+    facts: [],
+  });
+  state = h.run(state, { type: "project.update", id: state.projects[0].id, patch: { rewardsPerUnit: [{ attributeId, amount: 1 }] } });
+  state = h.run(state, {
+    type: "learning-more.import",
+    facts: [{ factId: "fact-token", type: "lesson-completed", occurredAt: "2026-07-24T10:00:00+08:00", courseId: "course-token", lessonId: "lesson-token" }],
+  });
+  const historyPlan = state.plans.find((plan) => plan.sourceRef === "learning-more:history:2026-07-24:lesson-token");
+  assert.ok(historyPlan);
+  state = { ...state, plans: state.plans.filter((plan) => plan.id !== historyPlan.id) };
+
+  state = h.run(state, {
+    type: "learning-more.import",
+    lessons: [{
+      courseId: "course-token",
+      lessonId: "lesson-token",
+      scheduleItemId: "schedule-token",
+      scheduledDate: "2026-07-24",
+      title: "Token 01",
+      order: 0,
+    }],
+    facts: [{ factId: "fact-token", type: "lesson-completed", occurredAt: "2026-07-24T10:00:00+08:00", courseId: "course-token", lessonId: "lesson-token", scheduleItemId: "schedule-token" }],
+  });
+
+  const schedulePlan = state.plans.find((plan) => plan.sourceRef === "learning-more:schedule-token");
+  assert.ok(schedulePlan);
+  assert.equal(state.completionFacts.some((fact) => fact.planId === historyPlan.id && fact.revertedAt === undefined), false);
+  assert.equal(state.completionFacts.some((fact) => fact.planId === schedulePlan.id && fact.revertedAt === undefined), true);
+  assert.equal(totalXpForAttribute(state, attributeId), 1);
+});
+
+test("deduplicates repeated Learning MORE mirror plans and compensates duplicated XP", () => {
+  const h = harness();
+  let state = addAttribute(h, createEmptyWeekUpState());
+  const attributeId = state.attributes[0].id;
+  const course = { courseId: "course-token", title: "Token", status: "active" };
+  const lesson = { courseId: "course-token", lessonId: "lesson-token", scheduleItemId: "schedule-token", scheduledDate: "2026-07-24", title: "Token 01", order: 0 };
+  state = h.run(state, { type: "learning-more.import", courses: [course], lessons: [lesson], facts: [] });
+  state = h.run(state, { type: "project.update", id: state.projects[0].id, patch: { rewardsPerUnit: [{ attributeId, amount: 1 }] } });
+  const originalPlan = state.plans.find((plan) => plan.sourceRef === "learning-more:schedule-token");
+  assert.ok(originalPlan);
+  const duplicatePlan = { ...originalPlan, id: "duplicated-plan", createdAt: "2026-07-24T00:00:01+08:00", updatedAt: "2026-07-24T00:00:01+08:00" };
+  state = { ...state, plans: [...state.plans, duplicatePlan] };
+  state = h.run(state, { type: "plan.complete", id: originalPlan.id, completedAt: "2026-07-24T10:00:00+08:00" });
+  state = h.run(state, { type: "plan.complete", id: duplicatePlan.id, completedAt: "2026-07-24T10:00:00+08:00" });
+  assert.equal(totalXpForAttribute(state, attributeId), 2);
+
+  state = h.run(state, { type: "xp.recalculate-from-templates" });
+
+  assert.equal(state.plans.filter((plan) => plan.removedAt === undefined && plan.sourceRef === "learning-more:schedule-token").length, 1);
+  assert.equal(state.completionFacts.filter((fact) => fact.revertedAt === undefined).length, 1);
+  assert.equal(totalXpForAttribute(state, attributeId), 1);
+});
+
+test("recalculates completed template-plan XP from current project rewards while preserving custom rewards", () => {
+  const h = harness();
+  let state = addAttribute(h, createEmptyWeekUpState());
+  const templateAttributeId = state.attributes[0].id;
+  state = addAttribute(h, state, "鑷畾涔?");
+  const customAttributeId = state.attributes[1].id;
+  state = h.run(state, { type: "project.create", value: { name: "论文", category: "研究", unit: "hour", rewardsPerUnit: [{ attributeId: templateAttributeId, amount: 1 }] } });
+  const projectId = state.projects[0].id;
+  state = h.run(state, { type: "project.plan.create", projectId, startAt: "2026-07-20T09:00:00+08:00", endAt: "2026-07-20T11:00:00+08:00" });
+  const templatePlanId = state.plans[0].id;
+  state = h.run(state, { type: "plan.create", value: { title: "手动奖励", detail: "", category: "研究", startAt: "2026-07-20T12:00:00+08:00", endAt: "2026-07-20T13:00:00+08:00", goalIds: [], rewards: [{ attributeId: customAttributeId, amount: 9 }], rewardMode: "custom" } });
+  const customPlanId = state.plans[1].id;
+  state = h.run(state, { type: "plan.complete", id: templatePlanId, completedAt: "2026-07-20T11:00:00+08:00" });
+  state = h.run(state, { type: "plan.complete", id: customPlanId, completedAt: "2026-07-20T13:00:00+08:00" });
+  assert.equal(totalXpForAttribute(state, templateAttributeId), 2);
+  assert.equal(totalXpForAttribute(state, customAttributeId), 9);
+
+  state = h.run(state, { type: "project.update", id: projectId, patch: { rewardsPerUnit: [{ attributeId: templateAttributeId, amount: 3 }] } });
+
+  assert.equal(totalXpForAttribute(state, templateAttributeId), 6);
+  assert.equal(totalXpForAttribute(state, customAttributeId), 9);
+  assert.deepEqual(state.completionFacts.find((fact) => fact.planId === templatePlanId && fact.revertedAt === undefined)?.rewardSnapshot, [{ attributeId: templateAttributeId, amount: 6 }]);
 });
 
 test("ignores authoritative Learning MORE completion for a permanently removed mirror plan", () => {

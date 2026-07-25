@@ -86,3 +86,32 @@ test("does not ignore an authoritative completion fact just because the lesson c
 
   assert.deepEqual(createLearningMoreDelta(cacheOnlyCompleted, { courses: [course], lessons: [lesson], facts: [fact], nextCursor: "cursor-1" })?.facts, [fact]);
 });
+
+test("re-emits a known Learning MORE fact when its schedule item points to a different plan mirror", () => {
+  const scheduleA = { ...lesson, lessonId: "same-lesson", scheduleItemId: "schedule-a", order: 0 };
+  const scheduleB = { ...lesson, lessonId: "same-lesson", scheduleItemId: "schedule-b", order: 1 };
+  const imported = dispatchWeekUp(createEmptyWeekUpState(), {
+    type: "learning-more.import",
+    courses: [course],
+    lessons: [scheduleA, scheduleB],
+    facts: [{
+      type: "lesson-completed",
+      factId: "external-completed-same-lesson",
+      courseId: course.courseId,
+      lessonId: "same-lesson",
+      occurredAt: "2026-07-21T09:00:00.000Z",
+      scheduleItemId: "schedule-a",
+    }],
+    nextCursor: "cursor-1",
+  }, context()).state;
+  const correctedFact = {
+    type: "lesson-completed",
+    factId: "external-completed-same-lesson",
+    courseId: course.courseId,
+    lessonId: "same-lesson",
+    occurredAt: "2026-07-21T10:00:00.000Z",
+    scheduleItemId: "schedule-b",
+  };
+
+  assert.deepEqual(createLearningMoreDelta(imported, { courses: [course], lessons: [scheduleA, scheduleB], facts: [correctedFact], nextCursor: "cursor-1" })?.facts, [correctedFact]);
+});

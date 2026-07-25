@@ -52,8 +52,25 @@ function samePlanMirror(state: WeekUpState, incoming: LearningMoreLessonItem): b
     && plan.sourceRef === `learning-more:${incoming.scheduleItemId}`;
 }
 
-function activeExternalFacts(facts: readonly CompletionFact[]): Set<string> {
-  return new Set(facts.flatMap((fact) => fact.externalFactId && fact.revertedAt === undefined ? [fact.externalFactId] : []));
+function activeExternalFactsById(facts: readonly CompletionFact[]): Map<string, Set<string>> {
+  const byId = new Map<string, Set<string>>();
+  for (const fact of facts) {
+    if (!fact.externalFactId || fact.revertedAt !== undefined) continue;
+    const planIds = byId.get(fact.externalFactId) ?? new Set<string>();
+    planIds.add(fact.planId);
+    byId.set(fact.externalFactId, planIds);
+  }
+  return byId;
+}
+
+function hasMatchingActiveLessonFact(state: WeekUpState, activeFacts: Map<string, Set<string>>, fact: LearningMoreFact): boolean {
+  if (fact.type !== "lesson-completed") return false;
+  const planIds = activeFacts.get(fact.factId);
+  if (!planIds) return false;
+  if (!fact.scheduleItemId) return true;
+  const targetRef = `learning-more:${fact.scheduleItemId}`;
+  const targetPlan = state.plans.find((plan) => plan.source === "learning-more" && plan.sourceRef === targetRef && plan.removedAt === undefined);
+  return targetPlan !== undefined && planIds.has(targetPlan.id);
 }
 
 export function createLearningMoreDelta(state: WeekUpState, batch: LearningMoreImportBatch): LearningMoreDelta | undefined {
@@ -67,11 +84,11 @@ export function createLearningMoreDelta(state: WeekUpState, batch: LearningMoreI
   const removedLessons = state.learningMoreLessons.filter((lesson) => !incomingLessonKeys.has(lessonScheduleKey(lesson)));
   const removedLessonIds = [...new Set(removedLessons.map((lesson) => lesson.lessonId))];
   const removedScheduleItemIds = removedLessons.map((lesson) => lesson.scheduleItemId);
-  const externalFacts = activeExternalFacts(state.completionFacts);
+  const externalFacts = activeExternalFactsById(state.completionFacts);
   const skillbookFacts = new Set(state.skillbooks.map((book) => book.sourceFactId));
   const facts = batch.facts.filter((fact) => fact.type === "course-closed"
     ? !skillbookFacts.has(fact.factId)
-    : !externalFacts.has(fact.factId));
+    : !hasMatchingActiveLessonFact(state, externalFacts, fact));
   const cursorChanged = batch.nextCursor !== undefined && batch.nextCursor !== state.learningMore.historyCursor;
   if (courses.length === 0 && lessons.length === 0 && removedCourseIds.length === 0 && removedLessonIds.length === 0 && removedScheduleItemIds.length === 0 && facts.length === 0 && !cursorChanged) return undefined;
   return {

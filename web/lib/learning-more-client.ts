@@ -64,6 +64,12 @@ function shiftShanghaiDate(localDate: string, days: number): string {
   return shanghaiDate(new Date(Date.parse(`${localDate}T00:00:00+08:00`) + days * 86_400_000).toISOString());
 }
 
+function completionFactKey(lessonId: string, localDate: string, scheduleItemId?: string, factId?: string): string {
+  if (scheduleItemId && !scheduleItemId.startsWith("history:")) return `schedule:${scheduleItemId}`;
+  if (factId) return `fact:${factId}`;
+  return `lesson:${localDate}:${lessonId}`;
+}
+
 export function createLearningMoreClient(baseUrl: string, fetcher: typeof fetch = fetch): LearningMoreClient {
   const base = baseUrl.replace(/\/$/, "");
   return {
@@ -143,13 +149,14 @@ export function createLearningMoreClient(baseUrl: string, fetcher: typeof fetch 
         const lesson = lessonById.get(completion.lessonId);
         const courseId = completion.courseId ?? lesson?.courseId;
         if (!courseId) continue;
-        lessonFacts.set(completion.lessonId, {
+        const scheduleItemId = scheduleItemForCompletion(completion.lessonId, courseId, completion.localDate);
+        lessonFacts.set(completionFactKey(completion.lessonId, completion.localDate, scheduleItemId), {
           factId: `calendar-completed:${completion.localDate}:${completion.lessonId}`,
           type: "lesson-completed",
           occurredAt: `${completion.localDate}T12:00:00+08:00`,
           courseId,
           lessonId: completion.lessonId,
-          ...(scheduleItemForCompletion(completion.lessonId, courseId, completion.localDate) ? { scheduleItemId: scheduleItemForCompletion(completion.lessonId, courseId, completion.localDate) } : {}),
+          ...(scheduleItemId ? { scheduleItemId } : {}),
           ...(completion.actualStartedAt ? { actualStartedAt: completion.actualStartedAt } : {}),
           ...(completion.actualEndedAt ? { actualEndedAt: completion.actualEndedAt } : {}),
         });
@@ -157,17 +164,20 @@ export function createLearningMoreClient(baseUrl: string, fetcher: typeof fetch 
       for (const entry of entries) {
         const courseId = entry.subjectRefs.courseId;
         if (entry.factType === "LessonCompletedFact" && courseId && entry.subjectRefs.lessonId) {
-          const existing = lessonFacts.get(entry.subjectRefs.lessonId);
+          const localDate = shanghaiDate(entry.occurredAt);
+          const scheduleItemId = scheduleItemForCompletion(entry.subjectRefs.lessonId, courseId, localDate);
+          const factKey = completionFactKey(entry.subjectRefs.lessonId, localDate, scheduleItemId, entry.factId);
+          const existing = lessonFacts.get(factKey);
           const payloadStart = typeof entry.payload?.actualStartedAt === "string" ? entry.payload.actualStartedAt : undefined;
           const payloadEnd = typeof entry.payload?.actualEndedAt === "string" ? entry.payload.actualEndedAt : undefined;
-          lessonFacts.set(entry.subjectRefs.lessonId, {
+          lessonFacts.set(factKey, {
             ...existing,
             factId: entry.factId,
             type: "lesson-completed",
             occurredAt: entry.occurredAt,
             courseId,
             lessonId: entry.subjectRefs.lessonId,
-            ...(scheduleItemForCompletion(entry.subjectRefs.lessonId, courseId, shanghaiDate(entry.occurredAt)) ? { scheduleItemId: scheduleItemForCompletion(entry.subjectRefs.lessonId, courseId, shanghaiDate(entry.occurredAt)) } : {}),
+            ...(scheduleItemId ? { scheduleItemId } : {}),
             ...(payloadStart ? { actualStartedAt: payloadStart } : {}),
             ...(payloadEnd ? { actualEndedAt: payloadEnd } : {}),
           });
@@ -178,8 +188,9 @@ export function createLearningMoreClient(baseUrl: string, fetcher: typeof fetch 
       }
       for (const item of lessons) {
         const lesson = lessonById.get(item.lessonId);
-        if (lesson?.progress === "completed" && !lessonFacts.has(item.lessonId)) {
-          lessonFacts.set(item.lessonId, { factId: `lesson-completed:${item.lessonId}`, type: "lesson-completed", occurredAt: lesson.lastActivityAt ?? `${item.scheduledDate}T12:00:00+08:00`, courseId: item.courseId, lessonId: item.lessonId, scheduleItemId: item.scheduleItemId });
+        const factKey = completionFactKey(item.lessonId, item.scheduledDate, item.scheduleItemId);
+        if (lesson?.progress === "completed" && !lessonFacts.has(factKey)) {
+          lessonFacts.set(factKey, { factId: `lesson-completed:${item.scheduleItemId ?? `${item.scheduledDate}:${item.lessonId}`}`, type: "lesson-completed", occurredAt: lesson.lastActivityAt ?? `${item.scheduledDate}T12:00:00+08:00`, courseId: item.courseId, lessonId: item.lessonId, scheduleItemId: item.scheduleItemId });
         }
       }
       for (const course of home.courses) {
