@@ -1,5 +1,7 @@
 import { colorIdForCategory, isCategoryColorId } from "./category-palette.ts";
 
+import { canRescheduleInsideWeekUp, participatesInOverdueQueue } from "./overdue-policy.ts";
+
 export const WEEK_UP_SCHEMA_VERSION = 14 as const;
 
 export type AiProviderId = "codex-cli" | "api";
@@ -538,7 +540,9 @@ function shiftSegments(segments: readonly PlanTimeSegment[], deltaMs: number, pl
 }
 
 function planIsOverdue(plan: PlanRecord, at: string): boolean {
-  return plan.timeStatus !== "unscheduled" && localDate(plan.startAt) < localDate(at);
+  return participatesInOverdueQueue(plan)
+    && plan.timeStatus !== "unscheduled"
+    && localDate(plan.startAt) < localDate(at);
 }
 
 function settlementSnapshot(state: WeekUpState, startDate: string, endDate: string, generatedAt: string) {
@@ -1230,7 +1234,9 @@ export function dispatchWeekUp(state: WeekUpState, command: WeekUpCommand, conte
       const current = state.plans.find((item) => item.id === command.id && item.removedAt === undefined);
       if (!current) throw new Error("plan_not_found");
       if (activeCompletion(state, current.id)) throw new Error("plan_already_completed");
+      if (current.source === "learning-more") throw new Error("plan_reschedule_owned_by_learning_more");
       if (!planIsOverdue(current, now)) throw new Error("plan_not_overdue");
+      if (!canRescheduleInsideWeekUp(current)) throw new Error("plan_reschedule_not_allowed");
       if (current.overdueRescheduledPlanId) throw new Error("plan_already_rescheduled");
       assertPeriod(command.startAt, command.endAt);
       if (localDate(command.startAt) < localDate(now)) throw new Error("reschedule_date_in_past");
@@ -1623,11 +1629,27 @@ export function dispatchWeekUp(state: WeekUpState, command: WeekUpCommand, conte
           Number.isFinite(Date.parse(actualStart)) &&
           Number.isFinite(Date.parse(actualEnd)) &&
           Date.parse(actualEnd) > Date.parse(actualStart);
+        const completionDate = localDate(fact.occurredAt);
         if (hasActualRange && (plan.startAt !== actualStart || plan.endAt !== actualEnd || plan.timeStatus !== "scheduled")) {
           next = {
             ...next,
             plans: next.plans.map((item) => item.id === plan.id
               ? { ...item, startAt: actualStart, endAt: actualEnd, timeSegments: [{ id: `${plan.id}:learning-more:actual`, startAt: actualStart, endAt: actualEnd, completedAt: fact.occurredAt }], timeStatus: "scheduled", updatedAt: now }
+              : item),
+          };
+          didChange = true;
+        } else if (!hasActualRange && completionDate > localDate(plan.startAt)) {
+          next = {
+            ...next,
+            plans: next.plans.map((item) => item.id === plan.id
+              ? {
+                  ...item,
+                  startAt: `${completionDate}T00:00:00+08:00`,
+                  endAt: `${completionDate}T01:00:00+08:00`,
+                  timeSegments: [],
+                  timeStatus: "unscheduled",
+                  updatedAt: now,
+                }
               : item),
           };
           didChange = true;

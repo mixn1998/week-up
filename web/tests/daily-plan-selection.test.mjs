@@ -37,3 +37,24 @@ test("only exposes unresolved overdue plans for daily rescheduling", () => {
 
   assert.deepEqual(result.overduePlans.map((item) => item.id), ["unresolved"]);
 });
+
+test("daily recurrence misses stay on their original day and never enter the overdue queue", () => {
+  const dailyMiss = plan({
+    id: "daily-miss",
+    scheduledDate: "2026-07-20",
+    overdue: true,
+    recurrenceGroupId: "daily-series",
+    recurrenceSummary: "每天 · 共 30 次",
+  });
+  const intervalMiss = plan({
+    id: "interval-miss",
+    scheduledDate: "2026-07-20",
+    overdue: true,
+    recurrenceGroupId: "interval-series",
+    recurrenceSummary: "每 2 天 · 共 15 次",
+  });
+
+  const result = selectDailyPlans([dailyMiss, intervalMiss], "2026-07-22", 2);
+
+  assert.deepEqual(result.overduePlans.map((item) => item.id), ["interval-miss"]);
+});

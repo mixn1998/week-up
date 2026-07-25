@@ -20,25 +20,33 @@ export function createLearningMoreSyncService({
       const batch = await client.pull(current.learningMore.historyCursor);
       const delta = createDelta(current, batch);
       if (!delta) return { status: "unchanged", revision: current.revision };
+      const applyDelta = (base, nextDelta) => store.dispatchChange(
+        { type: "learning-more.import", ...nextDelta },
+        {
+          expectedRevision: base.revision,
+          commandId: commandId(),
+          occurredAt: now(),
+        },
+      );
       try {
-        const result = store.dispatchChange(
-          { type: "learning-more.import", ...delta },
-          {
-            expectedRevision: current.revision,
-            commandId: commandId(),
-            occurredAt: now(),
-          },
-        );
+        const result = applyDelta(current, delta);
         return {
           status: result.changed ? "changed" : "unchanged",
           revision: result.state.revision,
         };
       } catch (error) {
-        // A browser command may land between load() and dispatchChange(). The
-        // next minute pulls against the new revision, so this is not a failure
-        // and must never take down the local service.
+        // A browser edit may land after the pull. Rebase the same immutable
+        // source batch onto the winning state, then retry once without
+        // overwriting the user's command.
         if (error?.code === "REVISION_CONFLICT") {
-          return { status: "conflict", revision: error.currentState?.revision ?? store.load().revision };
+          const latest = error.currentState ?? store.load();
+          const rebasedDelta = createDelta(latest, batch);
+          if (!rebasedDelta) return { status: "unchanged", revision: latest.revision };
+          const retried = applyDelta(latest, rebasedDelta);
+          return {
+            status: retried.changed ? "changed" : "unchanged",
+            revision: retried.state.revision,
+          };
         }
         throw error;
       }

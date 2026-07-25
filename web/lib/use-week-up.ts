@@ -15,6 +15,7 @@ import { createWeekUpStore } from "./week-up-store.ts";
 import { dueSettlementCommands } from "./settlement-scheduler.ts";
 import type { Attribute, PlanItem, WeightEntry } from "./demo-model";
 import { colorForCategory, readableTextColor } from "./category-palette.ts";
+import { participatesInOverdueQueue } from "./overdue-policy.ts";
 
 const repository = typeof window === "undefined" ? undefined : new HttpWeekUpRepository();
 const store = repository ? createWeekUpStore(repository) : undefined;
@@ -111,7 +112,7 @@ export function projectWeekUpView(state: WeekUpState): WeekUpViewModel {
       : undefined,
     ...(item.recurrenceSummary ? { recurrenceSummary: item.recurrenceSummary } : {}),
     ...(item.recurrenceGroupId ? { recurrenceDetached: item.recurrenceDetachedAt !== undefined } : {}),
-    ...(dateInShanghai(item.startAt) < today && !activeFacts.has(item.id) ? { overdue: true } : {}),
+    ...(dateInShanghai(item.startAt) < today && !activeFacts.has(item.id) && participatesInOverdueQueue(item) ? { overdue: true } : {}),
     ...(item.overdueSourcePlanId ? { overdueCarried: true } : {}),
     ...(item.overdueRescheduledPlanId ? { overdueRescheduled: true } : {}),
   };

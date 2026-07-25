@@ -1,7 +1,27 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { takeVisibleGroupedRows } from "../lib/weekly-action-visibility.ts";
+import { isLearningMoreCourseBundlePlan, isLearningMoreCourseComplete, isLearningMoreCoursePlan, takeVisibleGroupedRows } from "../lib/weekly-action-visibility.ts";
+
+test("merges completed, unscheduled, and overdue Learning MORE lessons into course bundles", () => {
+  assert.equal(isLearningMoreCourseBundlePlan({ source: "learning-more", completed: true, overdue: false, timeStatus: "scheduled" }), true);
+  assert.equal(isLearningMoreCourseBundlePlan({ source: "learning-more", completed: false, overdue: false, timeStatus: "unscheduled" }), true);
+  assert.equal(isLearningMoreCourseBundlePlan({ source: "learning-more", completed: false, overdue: true, timeStatus: "scheduled" }), true);
+});
+
+test("keeps ordinary overdue plans and scheduled pending lessons out of course bundles", () => {
+  assert.equal(isLearningMoreCourseBundlePlan({ source: "manual", completed: false, overdue: true, timeStatus: "scheduled" }), false);
+  assert.equal(isLearningMoreCourseBundlePlan({ source: "learning-more", completed: false, overdue: false, timeStatus: "scheduled" }), false);
+  assert.equal(isLearningMoreCoursePlan({ source: "learning-more", completed: false, overdue: false, timeStatus: "scheduled" }), true);
+});
+
+test("course completion is recalculated when Learning MORE adds another scheduled lesson", () => {
+  const completedLesson = { source: "learning-more", completed: true, overdue: false, timeStatus: "scheduled" };
+  const newlyScheduledLesson = { source: "learning-more", completed: false, overdue: false, timeStatus: "scheduled" };
+
+  assert.equal(isLearningMoreCourseComplete([completedLesson]), true);
+  assert.equal(isLearningMoreCourseComplete([completedLesson, newlyScheduledLesson]), false);
+});
 
 test("fills the second column when the same card group still has hidden entries", () => {
   const entries = [

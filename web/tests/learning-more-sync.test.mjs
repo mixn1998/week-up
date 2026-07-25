@@ -71,8 +71,9 @@ test("server Learning MORE sync writes only the incremental patch at the loaded 
   }]);
 });
 
-test("server Learning MORE sync coalesces overlapping polls and treats revision races as retryable", async () => {
+test("server Learning MORE sync coalesces overlapping polls and rebases revision races", async () => {
   let pulls = 0;
+  let dispatches = 0;
   let release;
   const gate = new Promise((resolve) => {
     release = resolve;
@@ -84,7 +85,9 @@ test("server Learning MORE sync coalesces overlapping polls and treats revision 
   const store = {
     load: () => state(),
     dispatchChange: () => {
-      throw conflict;
+      dispatches += 1;
+      if (dispatches === 1) throw conflict;
+      return { changed: true, state: state(10) };
     },
   };
   const service = createLearningMoreSyncService({
@@ -103,7 +106,8 @@ test("server Learning MORE sync coalesces overlapping polls and treats revision 
   const second = service.syncOnce();
   release();
 
-  assert.deepEqual(await first, { status: "conflict", revision: 9 });
-  assert.deepEqual(await second, { status: "conflict", revision: 9 });
+  assert.deepEqual(await first, { status: "changed", revision: 10 });
+  assert.deepEqual(await second, { status: "changed", revision: 10 });
   assert.equal(pulls, 1);
+  assert.equal(dispatches, 2);
 });

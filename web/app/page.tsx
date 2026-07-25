@@ -14,10 +14,11 @@ import { clusterCalendarPlans, projectCalendarCluster } from "../lib/calendar-la
 import { CATEGORY_PALETTE, colorForCategory, paletteColorValue, readableTextColor } from "../lib/category-palette";
 import { aggregateProjectCategoryContributions } from "../lib/project-contributions";
 import { groupPlansByProjectCategory } from "../lib/plan-category-groups";
-import { takeVisibleGroupedRows } from "../lib/weekly-action-visibility";
+import { isLearningMoreCourseBundlePlan, isLearningMoreCourseComplete, isLearningMoreCoursePlan, takeVisibleGroupedRows } from "../lib/weekly-action-visibility";
 import { comparePlansByExecution, earliestPlanByExecution } from "../lib/weekly-action-order";
 import { attributeGainsForCompletedDate, sortAttributeRewardsByAmount } from "../lib/attribute-gains";
 import { selectDailyPlans } from "../lib/daily-plan-selection";
+import { overdueDisposition } from "../lib/overdue-policy";
 import { summarizeWeekRouteDay } from "../lib/week-route-summary";
 import { expandRecurrenceDates, recurrenceSummary, type RecurrenceRule } from "../lib/recurrence";
 import { useWeekUp } from "../lib/use-week-up";
@@ -181,6 +182,7 @@ function PlanRow({ plan, attributes, onComplete, onEdit, onUndo, onRemove, onRes
   const segments = plan.timeSegments ?? [];
   const segmented = segments.length > 1;
   const completedSegments = segments.filter((segment) => segment.completed).length;
+  const overdueMode = plan.overdue ? overdueDisposition(plan) : undefined;
   return (
     <article className={`plan-row${plan.completed ? " is-complete" : ""}${plan.overdue ? " is-overdue" : ""}`}>
       {segmented ? <div className="plan-time plan-time--segments" aria-label={`${plan.title}的执行分段`}>{segments.map((segment, index) => <div className={segment.completed ? "is-complete" : ""} key={segment.id}>
@@ -193,7 +195,7 @@ function PlanRow({ plan, attributes, onComplete, onEdit, onUndo, onRemove, onRes
         <h3>{plan.title}</h3>
         <p>{plan.detail}</p>
         <RewardChips rewards={plan.rewards} attributes={attributes} />
-        {(onEdit || onUndo || onRemove || onReschedule) && <div className="plan-actions">{onEdit && !plan.overdue && <button type="button" onClick={() => onEdit(plan.id)}>编辑内容</button>}{plan.completed && onUndo && <button type="button" onClick={() => onUndo(plan.id)}>撤销完成</button>}{plan.overdue && onReschedule && !plan.overdueRescheduled && <button className="overdue-reschedule-button" type="button" onClick={() => onReschedule(plan.id)}>重新安排</button>}{plan.overdueRescheduled && <span className="overdue-rescheduled-note">已重新安排</span>}{onRemove && !plan.completed && !plan.overdue && plan.source !== "learning-more" && <button type="button" onClick={() => onRemove(plan.id)}>移除</button>}</div>}
+        {(onEdit || onUndo || onRemove || onReschedule || overdueMode === "learning-more") && <div className="plan-actions">{onEdit && !plan.overdue && <button type="button" onClick={() => onEdit(plan.id)}>编辑内容</button>}{plan.completed && onUndo && <button type="button" onClick={() => onUndo(plan.id)}>撤销完成</button>}{overdueMode === "week-up" && onReschedule && !plan.overdueRescheduled && <button className="overdue-reschedule-button" type="button" onClick={() => onReschedule(plan.id)}>重新安排</button>}{overdueMode === "learning-more" && <span className="overdue-learning-more-note" aria-disabled="true">去 Learning MORE 重新规划</span>}{plan.overdueRescheduled && <span className="overdue-rescheduled-note">已重新安排</span>}{onRemove && !plan.completed && plan.source !== "learning-more" && (!plan.overdue || overdueMode === "week-up") && <button type="button" onClick={() => onRemove(plan.id)}>移除</button>}</div>}
       </div>
       {segmented ? <div className={`complete-button complete-button--segments${plan.completed ? " is-complete" : ""}`} aria-label={`${plan.title}已完成${completedSegments}/${segments.length}段`}><b>{completedSegments}/{segments.length}</b><small>{plan.completed ? "已结算" : "分段"}</small></div> : <button className="complete-button" aria-label={plan.completed ? `${plan.title}已完成` : plan.overdue ? `${plan.title}已逾期` : `完成${plan.title}`} disabled={plan.completed || plan.overdue || plan.source === "learning-more"} onClick={() => onComplete(plan.id)}>{plan.completed ? "✓" : plan.overdue ? "!" : plan.source === "learning-more" ? "↻" : "○"}</button>}
     </article>
@@ -202,14 +204,17 @@ function PlanRow({ plan, attributes, onComplete, onEdit, onUndo, onRemove, onRes
 
 type WeeklyActionEntry =
   | Readonly<{ kind: "single"; id: string; plan: PlanItem }>
-  | Readonly<{ kind: "course"; id: string; plans: readonly PlanItem[] }>
+  | Readonly<{ kind: "course"; id: string; plans: readonly PlanItem[]; completionPlans: readonly PlanItem[] }>
   | Readonly<{ kind: "recurring"; id: string; plans: readonly PlanItem[] }>;
 
 function groupWeeklyActions(plans: readonly PlanItem[]): WeeklyActionEntry[] {
+  const allCourseGroups = new Map<string, PlanItem[]>();
   const courseGroups = new Map<string, PlanItem[]>();
   for (const plan of plans) {
-    if (plan.overdue || plan.source !== "learning-more" || (!plan.completed && plan.timeStatus !== "unscheduled")) continue;
+    if (!isLearningMoreCoursePlan(plan)) continue;
     const key = plan.projectId ?? plan.templateLabel ?? "learning-more-unassigned";
+    allCourseGroups.set(key, [...(allCourseGroups.get(key) ?? []), plan]);
+    if (!isLearningMoreCourseBundlePlan(plan)) continue;
     courseGroups.set(key, [...(courseGroups.get(key) ?? []), plan]);
   }
   const grouped = new Map<string, PlanItem[]>();
@@ -222,13 +227,18 @@ function groupWeeklyActions(plans: readonly PlanItem[]): WeeklyActionEntry[] {
   const emittedCourses = new Set<string>();
   const result: WeeklyActionEntry[] = [];
   for (const plan of plans) {
-    const courseKey = !plan.overdue && plan.source === "learning-more" && (plan.completed || plan.timeStatus === "unscheduled")
+    const courseKey = isLearningMoreCourseBundlePlan(plan)
       ? plan.projectId ?? plan.templateLabel ?? "learning-more-unassigned"
       : undefined;
     if (courseKey) {
       if (emittedCourses.has(courseKey)) continue;
       emittedCourses.add(courseKey);
-      result.push({ kind: "course", id: `course|${courseKey}`, plans: courseGroups.get(courseKey) ?? [plan] });
+      result.push({
+        kind: "course",
+        id: `course|${courseKey}`,
+        plans: courseGroups.get(courseKey) ?? [plan],
+        completionPlans: allCourseGroups.get(courseKey) ?? [plan],
+      });
       continue;
     }
     const key = !plan.overdue && plan.projectId && plan.recurrenceGroupId && !plan.recurrenceDetached && plan.timeStatus !== "unscheduled"
@@ -252,21 +262,22 @@ function compareWeeklyActionEntries(left: WeeklyActionEntry, right: WeeklyAction
   return comparePlansByExecution(leftPlan, rightPlan) || left.id.localeCompare(right.id);
 }
 
-function WeeklyCourseBundleCard({ plans, readOnly, onEdit }: { plans: readonly PlanItem[]; readOnly: boolean; onEdit: (id: string) => void }) {
+function WeeklyCourseBundleCard({ plans, completionPlans, readOnly, onEdit }: { plans: readonly PlanItem[]; completionPlans: readonly PlanItem[]; readOnly: boolean; onEdit: (id: string) => void }) {
   const [open, setOpen] = useState(false);
   const first = plans[0]!;
-  const completed = plans.filter((plan) => plan.completed).length;
-  const unscheduled = plans.filter((plan) => !plan.completed && plan.timeStatus === "unscheduled").length;
+  const completed = completionPlans.filter((plan) => plan.completed).length;
+  const overdue = completionPlans.filter((plan) => !plan.completed && plan.overdue).length;
+  const allCompleted = isLearningMoreCourseComplete(completionPlans);
   const courseName = first.templateLabel ?? "Learning MORE 课程";
   const sortedPlans = [...plans].sort((left, right) => (left.scheduledDate ?? "").localeCompare(right.scheduledDate ?? "") || left.start.localeCompare(right.start));
-  return <article className="weekly-course-bundle">
+  return <article className={`weekly-course-bundle${allCompleted ? " is-complete" : ""}`}>
     <header>
       <span className="weekly-course-bundle__book">▥</span>
-      <div><small>LEARNING MORE · COURSE PACK</small><h3>{courseName}</h3><p><b>本周 {plans.length} 节</b><span>已完成 {completed}</span>{unscheduled > 0 && <span>待安排 {unscheduled}</span>}</p></div>
+      <div><small>LEARNING MORE · COURSE PACK</small><h3>{courseName}</h3><p><b>本周 {completionPlans.length} 节</b><i aria-hidden="true">|</i><span>已完成 {completed} 节</span><i aria-hidden="true">|</i><span className={overdue > 0 ? "has-overdue" : ""}>逾期 {overdue} 节</span></p></div>
       <button type="button" onClick={() => setOpen((current) => !current)}>{open ? "收起课时 ↑" : "展开课时 ↓"}</button>
     </header>
-    <i className="weekly-course-bundle__progress"><em style={{ width: `${plans.length ? Math.round((completed / plans.length) * 100) : 0}%` }} /></i>
-    {open && <div className="weekly-course-lessons">{sortedPlans.map((plan) => <div className={plan.completed ? "is-complete" : ""} key={plan.id}><span>{plan.completed ? "✓" : "○"}</span><div><b>{plan.title}</b><small>{plan.completed ? "已完成" : plan.timeStatus === "unscheduled" ? "时间待配置" : `${plan.start}–${plan.end}`}</small></div>{!readOnly && <button type="button" onClick={() => onEdit(plan.id)}>{plan.completed ? "查看" : "配置时间"}</button>}</div>)}</div>}
+    <i className="weekly-course-bundle__progress"><em style={{ width: `${completionPlans.length ? Math.round((completed / completionPlans.length) * 100) : 0}%` }} /></i>
+    {open && <div className="weekly-course-lessons">{sortedPlans.map((plan) => <div className={`${plan.completed ? "is-complete" : ""}${plan.overdue ? " is-overdue" : ""}`} key={plan.id}><span>{plan.completed ? "✓" : plan.overdue ? "!" : "○"}</span><div><b>{plan.title}</b><small>{plan.completed ? "已完成" : plan.overdue ? "已逾期 · 请在 Learning MORE 重新规划" : plan.timeStatus === "unscheduled" ? "时间待配置" : `${plan.start}–${plan.end}`}</small></div>{plan.overdue ? <em className="weekly-course-lessons__owner-note">去 Learning MORE 重新规划</em> : !readOnly && <button type="button" onClick={() => onEdit(plan.id)}>{plan.completed ? "查看" : "配置时间"}</button>}</div>)}</div>}
   </article>;
 }
 
@@ -363,7 +374,6 @@ function TodayView({
   const completedPlans = todayPlans.filter((plan) => plan.completed).sort((left, right) => left.start.localeCompare(right.start));
   const pendingPlans = todayPlans.filter((plan) => !plan.completed).sort((left, right) => left.start.localeCompare(right.start));
   const visiblePending = pendingPlans.slice(0, visiblePlanCount);
-  const visibleOverdue = overdueOpen ? overduePlans : overduePlans.slice(0, 5);
   const planGroups = [
     { id: "now", label: "正在进行", items: visiblePending.filter((plan) => plan.scheduleGroup === "now") },
     { id: "next", label: "接下来", items: visiblePending.filter((plan) => plan.scheduleGroup === "next") },
@@ -407,7 +417,7 @@ function TodayView({
             <button className="pixel-button pixel-button--pink" onClick={onQuickAdd}>＋ 新增计划</button>
           </div>
           <div className={`timeline${todayPlans.length > 8 ? " timeline--dense" : ""}`}>
-            {overduePlans.length > 0 && <section className="plan-group overdue-group"><div className="plan-group__heading overdue-group__heading"><div><b>逾期待重排</b><small>原记录已锁定，不计入今日与原周结算</small></div><span>{overduePlans.length} 项</span></div>{visibleOverdue.map((plan) => <PlanRow key={plan.id} plan={plan} attributes={attributes} onComplete={onComplete} onReschedule={onRescheduleOverdue} />)}{overduePlans.length > 5 && <button className="load-more" type="button" onClick={() => setOverdueOpen((current) => !current)}>{overdueOpen ? "收起逾期任务" : `展开其余 ${overduePlans.length - 5} 项`}</button>}</section>}
+            {overduePlans.length > 0 && <section className="plan-group overdue-group"><button className="plan-group__heading overdue-group__heading overdue-group__toggle" type="button" onClick={() => setOverdueOpen((current) => !current)} aria-expanded={overdueOpen}><div><b>逾期待处理</b><small>原记录已锁定，不计入今日与原周结算</small></div><span className="overdue-group__controls"><b>{overduePlans.length}</b><em>{overdueOpen ? "收起" : "展开"}<i aria-hidden="true">{overdueOpen ? "↑" : "↓"}</i></em></span></button>{overdueOpen && overduePlans.map((plan) => <PlanRow key={plan.id} plan={plan} attributes={attributes} onComplete={onComplete} onRemove={onRemove} onReschedule={onRescheduleOverdue} />)}</section>}
             {todayPlans.length === 0 && <div className="empty-state"><span>＋</span><h3>今天还没有计划</h3><p>点击“新增计划”创建第一项具体行动。</p><button className="pixel-button pixel-button--pink" onClick={onQuickAdd}>新增第一个计划</button></div>}
             {planGroups.map((group) => <section className="plan-group" key={group.id}><div className="plan-group__heading"><b>{group.label}</b><span>{group.items.length} 项</span></div>{group.items.map((plan) => <PlanRow key={plan.id} plan={plan} attributes={attributes} onComplete={onComplete} onEdit={onEdit} onUndo={onUndo} onRemove={onRemove} />)}</section>)}
             {pendingPlans.length > visiblePlanCount && <button className="load-more" onClick={() => setVisiblePlanCount((current) => current + 20)}>再显示 {Math.min(20, pendingPlans.length - visiblePlanCount)} 项</button>}
@@ -593,7 +603,9 @@ function WeekDashboard({ attributes, plans, planRecords, goals, settlements, ini
   const actionKindOrder = ["recurring", "single", "course"] as const;
   const actionEntryIsComplete = (entry: WeeklyActionEntry) => entry.kind === "single"
     ? entry.plan.completed
-    : entry.plans.every((plan) => plan.completed);
+    : entry.kind === "course"
+      ? isLearningMoreCourseComplete(entry.completionPlans)
+      : entry.plans.every((plan) => plan.completed);
   const orderedActionEntries = [false, true].flatMap((completed) => actionKindOrder.flatMap((kind) =>
     actionEntries.filter((entry) => entry.kind === kind && actionEntryIsComplete(entry) === completed).sort(compareWeeklyActionEntries),
   ));
@@ -615,7 +627,7 @@ function WeekDashboard({ attributes, plans, planRecords, goals, settlements, ini
   const renderActionEntry = (entry: WeeklyActionEntry) => entry.kind === "single"
     ? <PlanRow key={entry.id} plan={entry.plan} attributes={attributes} onComplete={selectedSettlement ? () => undefined : onComplete} onReschedule={onRescheduleOverdue} {...(!selectedSettlement ? { onEdit: onEditPlan, onUndo: onUndoPlan, onRemove: onRemovePlan } : {})} />
     : entry.kind === "course"
-      ? <WeeklyCourseBundleCard key={entry.id} plans={entry.plans} readOnly={Boolean(selectedSettlement)} onEdit={onEditPlan} />
+      ? <WeeklyCourseBundleCard key={entry.id} plans={entry.plans} completionPlans={entry.completionPlans} readOnly={Boolean(selectedSettlement)} onEdit={onEditPlan} />
       : <WeeklyRepeatedPlanCard key={entry.id} plans={entry.plans} dates={days} attributes={attributes} readOnly={Boolean(selectedSettlement)} onComplete={onComplete} onEdit={onEditPlan} onUndo={onUndoPlan} />;
   const completedActionCount = countedPlans.filter((plan) => plan.completed).length;
   const actionProgress = countedPlans.length ? Math.round((completedActionCount / countedPlans.length) * 100) : 0;

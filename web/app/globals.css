@@ -726,6 +726,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible {
 .overdue-reschedule-button { min-height: 31px; padding: 5px 10px; border: 2px solid var(--ink); background: var(--cyan); color: var(--ink); box-shadow: 2px 2px 0 var(--ink); font-weight: 900; cursor: pointer; }
 .overdue-reschedule-button:hover, .overdue-reschedule-button:focus-visible { background: var(--yellow); transform: translate(-1px,-1px); }
 .overdue-rescheduled-note { align-self: center; color: var(--muted); font-size: 9px; font-weight: 900; }
+.overdue-learning-more-note { display: inline-flex; min-height: 31px; align-items: center; padding: 5px 10px; border: 2px dashed rgba(53,40,75,.45); background: #f2eef5; color: var(--muted); font-size: 10px; font-weight: 900; cursor: not-allowed; }
 .reward-chips { display: flex; flex-wrap: wrap; gap: 5px; }
 .reward-more { min-height: 24px; padding: 2px 7px; border: 2px solid var(--ink); background: var(--yellow); font-size: 9px; font-weight: 900; }
 .timeline--dense .plan-row { min-height: 104px; padding: 10px 0; }
@@ -733,9 +734,15 @@ button:focus-visible, input:focus-visible, textarea:focus-visible {
 .plan-group__heading { display: flex; align-items: center; justify-content: space-between; padding: 7px 10px; border: 2px solid var(--ink); background: #f3ecf4; font-size: 11px; }
 .plan-group__heading span { color: var(--muted); }
 .overdue-group { border: 2px solid rgba(166, 27, 80, .24); background: rgba(255, 244, 248, .54); }
-.overdue-group__heading { border: 0; border-bottom: 2px solid var(--ink); background: #fff0f5; }
+.overdue-group__heading { border: 0; background: #fff0f5; }
+.overdue-group__toggle { width: 100%; color: var(--ink); font: inherit; text-align: left; cursor: pointer; }
+.overdue-group__toggle:hover, .overdue-group__toggle:focus-visible { background: #ffe5ef; }
 .overdue-group__heading > div { display: grid; gap: 2px; }
 .overdue-group__heading small { color: var(--muted); font-size: 9px; font-weight: 600; }
+.overdue-group__controls { display: inline-flex; align-items: stretch; border: 2px solid var(--ink); background: white; box-shadow: 2px 2px 0 var(--ink); color: var(--ink) !important; }
+.overdue-group__controls > b { display: grid; min-width: 28px; place-items: center; padding: 4px 7px; background: var(--pink); color: white; font-size: 11px; line-height: 1; }
+.overdue-group__controls > em { display: inline-flex; min-width: 54px; align-items: center; justify-content: center; gap: 6px; padding: 4px 8px; color: var(--ink); font-size: 9px; font-style: normal; font-weight: 900; }
+.overdue-group__controls > em > i { color: var(--pink); font-style: normal; font-size: 11px; line-height: 1; }
 .overdue-group .plan-row { padding-inline: 10px; }
 .plan-group__toggle { display: flex; width: 100%; min-height: 42px; align-items: center; justify-content: space-between; padding: 8px 11px; border: 2px solid var(--ink); background: var(--mint); font-weight: 900; }
 .load-more { display: block; min-height: 38px; margin: 12px auto 0; padding: 7px 14px; border: 2px dashed var(--ink); background: white; color: var(--violet); font-weight: 900; }
@@ -1524,9 +1531,12 @@ button:focus-visible, input:focus-visible, textarea:focus-visible {
 .weekly-course-bundle > header > div { min-width: 0; }
 .weekly-course-bundle > header small { color: var(--violet); font-family: Consolas,monospace; font-size: 8px; font-weight: 900; letter-spacing: 1px; }
 .weekly-course-bundle > header h3 { margin: 3px 0 6px; overflow: hidden; font-size: 17px; text-overflow: ellipsis; white-space: nowrap; }
-.weekly-course-bundle > header p { display: flex; flex-wrap: wrap; gap: 6px; margin: 0; }
+.weekly-course-bundle.is-complete > header h3 { color: var(--muted); text-decoration: line-through; text-decoration-thickness: 2px; text-decoration-color: rgba(48,36,71,.62); }
+.weekly-course-bundle > header p { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; margin: 0; }
 .weekly-course-bundle > header p b, .weekly-course-bundle > header p span { padding: 3px 6px; border: 1px solid rgba(48,36,71,.24); background: #faf8fb; font-size: 8px; }
 .weekly-course-bundle > header p b { border-color: var(--ink); background: #f3efff; color: var(--ink); }
+.weekly-course-bundle > header p i { color: rgba(48,36,71,.4); font-size: 9px; font-style: normal; font-weight: 900; }
+.weekly-course-bundle > header p span.has-overdue { border-color: rgba(166,27,80,.48); background: #fff0f5; color: #a61b50; font-weight: 900; }
 .weekly-course-bundle > header > button { min-height: 34px; padding: 6px 9px; border: 2px solid var(--ink); background: #faf8fb; color: var(--ink); box-shadow: 2px 2px 0 var(--ink); font-size: 9px; font-weight: 900; white-space: nowrap; cursor: pointer; }
 .weekly-course-bundle__progress { display: block; height: 8px; margin-top: 11px; overflow: hidden; border: 2px solid var(--ink); background: white; }
 .weekly-course-bundle__progress em { display: block; height: 100%; background: var(--violet); }
@@ -1534,11 +1544,14 @@ button:focus-visible, input:focus-visible, textarea:focus-visible {
 .weekly-course-lessons > div { display: grid; min-width: 0; grid-template-columns: auto minmax(0,1fr) auto; align-items: center; gap: 8px; padding: 8px; border: 2px solid rgba(48,36,71,.7); background: #fbfafc; }
 .weekly-course-lessons > div > span { display: grid; width: 25px; height: 25px; place-items: center; border: 2px solid var(--ink); background: white; font-weight: 900; }
 .weekly-course-lessons > div.is-complete > span { background: var(--mint); color: var(--ink); }
+.weekly-course-lessons > div.is-overdue { border-color: rgba(166,27,80,.55); background: #fff7fa; }
+.weekly-course-lessons > div.is-overdue > span { background: #f1e8f4; color: #a61b50; }
 .weekly-course-lessons > div > div { min-width: 0; }
 .weekly-course-lessons b, .weekly-course-lessons small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .weekly-course-lessons b { font-size: 10px; }
 .weekly-course-lessons small { margin-top: 2px; color: var(--muted); font-size: 8px; }
 .weekly-course-lessons button { min-height: 28px; padding: 4px 7px; border: 2px solid var(--ink); background: white; box-shadow: 2px 2px 0 var(--ink); color: var(--violet); font-size: 8px; font-weight: 900; white-space: nowrap; cursor: pointer; }
+.weekly-course-lessons__owner-note { max-width: 132px; padding: 5px 7px; border: 1px dashed rgba(53,40,75,.45); background: #f2eef5; color: var(--muted); font-size: 8px; font-style: normal; font-weight: 900; text-align: center; }
 .period-review-zone { margin-top: 22px; }
 .review-summary--week { background: var(--violet); }
 .review-summary--month { background: linear-gradient(115deg,#5a3edf,var(--pink)); }

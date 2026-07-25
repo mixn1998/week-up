@@ -1,3 +1,23 @@
+export type WeeklyCourseBundleCandidate = Readonly<{
+  source?: string;
+  completed: boolean;
+  overdue?: boolean;
+  timeStatus?: string;
+}>;
+
+export function isLearningMoreCoursePlan(plan: WeeklyCourseBundleCandidate): boolean {
+  return plan.source === "learning-more";
+}
+
+export function isLearningMoreCourseBundlePlan(plan: WeeklyCourseBundleCandidate): boolean {
+  return isLearningMoreCoursePlan(plan)
+    && (plan.completed || plan.overdue === true || plan.timeStatus === "unscheduled");
+}
+
+export function isLearningMoreCourseComplete(plans: readonly WeeklyCourseBundleCandidate[]): boolean {
+  return plans.length > 0 && plans.every((plan) => plan.completed);
+}
+
 export function takeVisibleGroupedRows<T>(
   items: readonly T[],
   limit: number,

@@ -582,6 +582,54 @@ test("reschedules an overdue plan as a new carried record and grants rewards onl
   assert.equal(state.completionFacts.filter((fact) => fact.revertedAt === undefined).length, 1);
 });
 
+test("daily recurrence misses are historical incomplete records instead of overdue work", () => {
+  const h = harness("2026-07-20T08:00:00+08:00");
+  let state = addAttribute(h, createEmptyWeekUpState());
+  state = h.run(state, {
+    type: "plan.recurrence.create",
+    title: "每日复盘",
+    startAts: ["2026-07-18T21:00:00+08:00", "2026-07-19T21:00:00+08:00"],
+    endAts: ["2026-07-18T21:10:00+08:00", "2026-07-19T21:10:00+08:00"],
+    recurrenceGroupId: "daily-review",
+    recurrenceSummary: "每天 · 共 2 次",
+  });
+  const originalId = state.plans[0].id;
+
+  assert.throws(
+    () => h.run(state, {
+      type: "plan.overdue.reschedule",
+      id: originalId,
+      startAt: "2026-07-20T21:00:00+08:00",
+      endAt: "2026-07-20T21:10:00+08:00",
+    }),
+    /plan_not_overdue/,
+  );
+});
+
+test("Learning MORE owns rescheduling for overdue course lessons", () => {
+  const h = harness("2026-07-20T08:00:00+08:00");
+  let state = addAttribute(h, createEmptyWeekUpState());
+  state = addPlan(h, state, state.attributes[0].id, {
+    title: "课程课时",
+    source: "learning-more",
+    sourceRef: "learning-more:schedule-1",
+    sourceLessonId: "lesson-1",
+    sourceCourseId: "course-1",
+    startAt: "2026-07-19T09:00:00+08:00",
+    endAt: "2026-07-19T10:00:00+08:00",
+  });
+
+  assert.throws(
+    () => h.run(state, {
+      type: "plan.overdue.reschedule",
+      id: state.plans[0].id,
+      startAt: "2026-07-20T09:00:00+08:00",
+      endAt: "2026-07-20T10:00:00+08:00",
+    }),
+    /plan_reschedule_owned_by_learning_more/,
+  );
+});
+
 test("can carry an overdue plan into a new date without assigning a time", () => {
   const h = harness("2026-07-20T08:00:00+08:00");
   let state = addAttribute(h, createEmptyWeekUpState());
@@ -759,6 +807,47 @@ test("imports Learning MORE course tables and facts while Week UP owns schedule 
   assert.equal(totalXpForAttribute(duplicate, duplicate.attributes[0].id), 3);
   assert.equal(duplicate.learningMoreLessons[0].completedAt, "2026-07-20T02:00:00Z");
   assert.equal(duplicate.plans[0].removedAt, undefined);
+});
+
+test("places a directly completed overdue Learning MORE lesson on its completion day", () => {
+  const h = harness("2026-07-23T00:00:00.000Z");
+  let state = addAttribute(h, createEmptyWeekUpState());
+  const attributeId = state.attributes[0].id;
+  const course = { courseId: "course-late", title: "Late course", status: "active" };
+  const lesson = {
+    courseId: "course-late",
+    lessonId: "lesson-late",
+    scheduleItemId: "schedule-late",
+    scheduledDate: "2026-07-20",
+    title: "Late lesson",
+    order: 0,
+  };
+  state = h.run(state, { type: "learning-more.import", courses: [course], lessons: [lesson], facts: [] });
+  state = h.run(state, {
+    type: "project.update",
+    id: state.projects[0].id,
+    patch: { rewardsPerUnit: [{ attributeId, amount: 2 }] },
+  });
+
+  const completion = {
+    factId: "fact-late",
+    type: "lesson-completed",
+    occurredAt: "2026-07-22T19:30:00+08:00",
+    courseId: "course-late",
+    lessonId: "lesson-late",
+    scheduleItemId: "schedule-late",
+  };
+  state = h.run(state, { type: "learning-more.import", facts: [completion] });
+
+  assert.equal(state.plans[0].startAt, "2026-07-22T00:00:00+08:00");
+  assert.equal(state.plans[0].timeStatus, "unscheduled");
+  assert.deepEqual(state.plans[0].timeSegments, []);
+  assert.equal(state.completionFacts[0].completedAt, completion.occurredAt);
+  assert.equal(totalXpForAttribute(state, attributeId), 2);
+
+  state = h.run(state, { type: "learning-more.import", facts: [completion] });
+  assert.equal(state.completionFacts.filter((fact) => fact.revertedAt === undefined).length, 1);
+  assert.equal(totalXpForAttribute(state, attributeId), 2);
 });
 
 test("adds Learning MORE provenance without duplicating a manual completion reward", () => {

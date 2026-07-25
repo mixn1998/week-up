@@ -1,4 +1,5 @@
 import type { PlanItem } from "./demo-model";
+import { participatesInOverdueQueue } from "./overdue-policy.ts";
 
 export function selectDailyPlans(
   plans: readonly PlanItem[],
@@ -14,7 +15,8 @@ export function selectDailyPlans(
     .filter((plan) =>
       plan.overdue === true
       && !plan.completed
-      && !plan.overdueRescheduled,
+      && !plan.overdueRescheduled
+      && participatesInOverdueQueue(plan),
     )
     .sort((left, right) => (right.scheduledDate ?? "").localeCompare(left.scheduledDate ?? ""));
   return { todayPlans, overduePlans };
