@@ -6,6 +6,8 @@ import { fileURLToPath } from "node:url";
 
 import { createWeekUpDatabase, maintainBackups } from "./week-up-database.mjs";
 import { createAiReviewService, createCodexCliRunner } from "./ai-review-service.mjs";
+import { createLearningMoreClient } from "../lib/learning-more-client.ts";
+import { createLearningMoreSyncService } from "./learning-more-sync.mjs";
 
 const HOST = "127.0.0.1";
 const PORT = Number(process.env.WEEK_UP_PORT ?? 4173);
@@ -16,6 +18,10 @@ const localDataRoot = process.env.WEEK_UP_DATA_DIR
   : join(process.env.LOCALAPPDATA ?? projectRoot, "Week UP");
 const store = await createWeekUpDatabase(join(localDataRoot, "data", "week-up.sqlite"));
 const aiReview = createAiReviewService({ codex: createCodexCliRunner({ dataRoot: localDataRoot, projectRoot }) });
+const learningMoreSync = createLearningMoreSyncService({
+  store,
+  client: createLearningMoreClient(process.env.LEARNING_MORE_BASE_URL ?? "http://127.0.0.1:43120"),
+});
 
 const contentTypes = new Map([
   [".html", "text/html; charset=utf-8"], [".js", "text/javascript; charset=utf-8"],
@@ -131,6 +137,7 @@ server.listen(PORT, HOST, async () => {
   console.log(`Week UP is ready at http://${HOST}:${PORT}/`);
   console.log(`SQLite: ${store.path}`);
   if (store.migrationBackupPath) console.log(`Pre-migration backup: ${store.migrationBackupPath}`);
+  learningMoreSync.start();
   try { await maintainBackups(store, join(localDataRoot, "backups")); }
   catch (error) { console.error("Backup failed:", error); }
 });
@@ -140,6 +147,7 @@ backupTimer.unref();
 
 function shutdown() {
   clearInterval(backupTimer);
+  learningMoreSync.stop();
   server.close(() => { store.close(); process.exit(0); });
 }
 process.on("SIGINT", shutdown);

@@ -132,3 +132,91 @@ test("emits separate completion facts for repeated Learning MORE schedule items 
 
   assert.deepEqual(completedScheduleIds, ["schedule-token-a", "schedule-token-b"]);
 });
+
+test("binds a completion that crosses midnight to the schedule item from its actual start date", async () => {
+  const fetcher = async (url) => {
+    const parsed = new URL(url);
+    if (parsed.pathname.endsWith("/home")) return Response.json({
+      generatedAt: "2026-07-25T06:30:00Z",
+      courses: [{ courseId: "course-token", title: "Token", status: "active" }],
+      lessons: [{
+        courseId: "course-token",
+        lessonId: "lesson-token",
+        title: "Token 到底是什么",
+        progress: "completed",
+        lastActivityAt: "2026-07-24T16:08:40.104Z",
+      }],
+      schedule: [{
+        scheduleItemId: "schedule-token",
+        courseId: "course-token",
+        lessonId: "lesson-token",
+        startAt: "2026-07-24T11:00:00.000Z",
+        endAt: "2026-07-24T11:40:00.000Z",
+      }],
+    });
+    if (parsed.pathname.endsWith("/history/calendar")) return Response.json({
+      days: [{
+        localDate: "2026-07-25",
+        completions: [{
+          lessonId: "lesson-token",
+          courseId: "course-token",
+          actualSeconds: 1429,
+          actualStartedAt: "2026-07-24T14:43:57.007Z",
+          actualEndedAt: "2026-07-24T16:08:40.104Z",
+        }],
+      }],
+    });
+    return Response.json({ entries: [] });
+  };
+
+  const batch = await createLearningMoreClient("http://learning-more.local", fetcher).pull("latest-cursor");
+  const lessonFacts = batch.facts.filter((fact) => fact.type === "lesson-completed");
+
+  assert.deepEqual(batch.lessons.map((item) => item.scheduleItemId), ["schedule-token"]);
+  assert.equal(lessonFacts.length, 1);
+  assert.equal(lessonFacts[0].scheduleItemId, "schedule-token");
+});
+
+test("keeps a historical completion when the same lesson id is scheduled again on another date", async () => {
+  const fetcher = async (url) => {
+    const parsed = new URL(url);
+    if (parsed.pathname.endsWith("/home")) return Response.json({
+      generatedAt: "2026-07-25T06:30:00Z",
+      courses: [{ courseId: "course-repeat", title: "Repeat", status: "active" }],
+      lessons: [{
+        courseId: "course-repeat",
+        lessonId: "lesson-repeat",
+        title: "重复课节",
+        progress: "completed",
+        lastActivityAt: "2026-07-20T03:00:00Z",
+      }],
+      schedule: [{
+        scheduleItemId: "schedule-future",
+        courseId: "course-repeat",
+        lessonId: "lesson-repeat",
+        startAt: "2026-07-27T11:00:00.000Z",
+        endAt: "2026-07-27T11:40:00.000Z",
+      }],
+    });
+    if (parsed.pathname.endsWith("/history/calendar")) return Response.json({
+      days: [{
+        localDate: "2026-07-20",
+        completions: [{
+          lessonId: "lesson-repeat",
+          courseId: "course-repeat",
+          actualSeconds: 1200,
+          actualStartedAt: "2026-07-20T02:00:00.000Z",
+          actualEndedAt: "2026-07-20T03:00:00.000Z",
+        }],
+      }],
+    });
+    return Response.json({ entries: [] });
+  };
+
+  const batch = await createLearningMoreClient("http://learning-more.local", fetcher).pull("latest-cursor");
+
+  assert.deepEqual(batch.lessons.map((item) => item.scheduleItemId), [
+    "history:2026-07-20:lesson-repeat",
+    "schedule-future",
+  ]);
+});
