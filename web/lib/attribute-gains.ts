@@ -1,5 +1,5 @@
 import type { AttributeReward } from "./demo-model";
-import type { XpTransaction } from "./week-up-domain";
+import type { CompletionFact, XpTransaction } from "./week-up-domain";
 
 export function sortAttributeRewardsByAmount(rewards: readonly AttributeReward[]): AttributeReward[] {
   return [...rewards].sort((left, right) => right.amount - left.amount || left.attributeId.localeCompare(right.attributeId));
@@ -20,6 +20,24 @@ export function netAttributeGainsForDate(
   transactions.forEach((transaction) => {
     if (localDateInTimeZone(transaction.occurredAt, timeZone) !== localDate) return;
     totals.set(transaction.attributeId, (totals.get(transaction.attributeId) ?? 0) + transaction.amount);
+  });
+
+  return sortAttributeRewardsByAmount([...totals.entries()]
+    .filter(([, amount]) => amount > 0)
+    .map(([attributeId, amount]) => ({ attributeId, amount })));
+}
+
+export function attributeGainsForCompletedDate(
+  completionFacts: readonly CompletionFact[],
+  localDate: string,
+  timeZone = "Asia/Shanghai",
+): AttributeReward[] {
+  const totals = new Map<string, number>();
+  completionFacts.forEach((fact) => {
+    if (fact.revertedAt !== undefined || localDateInTimeZone(fact.completedAt, timeZone) !== localDate) return;
+    fact.rewardSnapshot.forEach((reward) => {
+      totals.set(reward.attributeId, (totals.get(reward.attributeId) ?? 0) + reward.amount);
+    });
   });
 
   return sortAttributeRewardsByAmount([...totals.entries()]

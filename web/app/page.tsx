@@ -16,13 +16,13 @@ import { aggregateProjectCategoryContributions } from "../lib/project-contributi
 import { groupPlansByProjectCategory } from "../lib/plan-category-groups";
 import { takeVisibleGroupedRows } from "../lib/weekly-action-visibility";
 import { comparePlansByExecution, earliestPlanByExecution } from "../lib/weekly-action-order";
-import { netAttributeGainsForDate, sortAttributeRewardsByAmount } from "../lib/attribute-gains";
+import { attributeGainsForCompletedDate, sortAttributeRewardsByAmount } from "../lib/attribute-gains";
 import { selectDailyPlans } from "../lib/daily-plan-selection";
 import { expandRecurrenceDates, recurrenceSummary, type RecurrenceRule } from "../lib/recurrence";
 import { useWeekUp } from "../lib/use-week-up";
 import { AiStatusControl } from "./ai-status-control";
 import { MilestoneRunner } from "./milestone-runner";
-import { exportWeekUpBackup, importWeekUpBackup, type AttributeCategoryRecord, type AttributeRecord, type GoalRecord, type LearningMoreCourse, type LearningMoreLesson, type PlanRecord, type PlanTimeSegment, type PlanTimeSegmentInput, type ProjectRecord, type RewardUnit, type SettlementRecord, type SkillbookRecord, type WeekUpState, type XpTransaction } from "../lib/week-up-domain";
+import { exportWeekUpBackup, importWeekUpBackup, type AttributeCategoryRecord, type AttributeRecord, type CompletionFact, type GoalRecord, type LearningMoreCourse, type LearningMoreLesson, type PlanRecord, type PlanTimeSegment, type PlanTimeSegmentInput, type ProjectRecord, type RewardUnit, type SettlementRecord, type SkillbookRecord, type WeekUpState } from "../lib/week-up-domain";
 
 type TabId = "today" | "week" | "month" | "calendar" | "action-config" | "growth" | "weight";
 
@@ -328,7 +328,7 @@ function WeightChart({ entries, target, compact = false, averageValues }: { entr
 function TodayView({
   plans,
   attributes,
-  xpTransactions,
+  completionFacts,
   weights,
   onComplete,
   onExternalComplete,
@@ -341,7 +341,7 @@ function TodayView({
 }: {
   plans: PlanItem[];
   attributes: Attribute[];
-  xpTransactions: readonly XpTransaction[];
+  completionFacts: readonly CompletionFact[];
   weights: WeightEntry[];
   onComplete: (id: string, segmentId?: string) => void;
   onExternalComplete: () => void;
@@ -372,7 +372,7 @@ function TodayView({
   const learningPlan = todayPlans.find((plan) => plan.source === "learning-more");
   const latest = weights.at(-1);
   const averages = movingAverage(weights);
-  const dailyGains = netAttributeGainsForDate(xpTransactions, currentLocalDate())
+  const dailyGains = attributeGainsForCompletedDate(completionFacts, currentLocalDate())
     .map((reward) => ({ attribute: attributes.find((attribute) => attribute.id === reward.attributeId), amount: reward.amount }))
     .filter((item): item is { attribute: Attribute; amount: number } => item.attribute !== undefined)
     .sort((left, right) => right.amount - left.amount || left.attribute.name.localeCompare(right.attribute.name, "zh-CN"));
@@ -1357,7 +1357,7 @@ export default function Home() {
         <header className="topbar"><div className="mobile-brand">WEEK <b>UP!</b></div><div className="breadcrumb"><span>{activeNav.eyebrow}</span><b>{activeNav.label}</b></div><div className="top-actions"><button className="sync-status" onClick={() => void weekUp.syncLearningMore()} disabled={weekUp.syncing}><i />{weekUp.syncing ? "Learning MORE 同步中" : weekUp.state.learningMore.lastError ? "Learning MORE 暂时离线" : weekUp.state.learningMore.lastSyncedAt ? "Learning MORE 已同步" : "点击连接 Learning MORE"}</button><AiStatusControl config={weekUp.state.aiReview} status={weekUp.aiStatus} checking={weekUp.checkingAi} onConfigure={(value) => void weekUp.dispatch({ type: "ai-review.configure", ...value })} onRefresh={() => void weekUp.refreshAiStatus(true)} /><button className="icon-button" aria-label="设置" onClick={() => setSettingsOpen(true)}>⚙</button></div></header>
         <div className="page-wrap">
           {weekUp.persistenceStatus === "offline" && <section className="persistence-alert" role="alert"><b>本地服务暂时离线</b><span>当前展示的是最近缓存，修改操作不会生效。请重新启动 Week UP 服务后刷新页面。</span></section>}
-          {tab === "today" && <TodayView plans={plans} attributes={attributes} xpTransactions={weekUp.state.xpTransactions} weights={weights} onComplete={completePlan} onExternalComplete={completeLearningPlan} onQuickAdd={() => openQuickAdd()} onOpenWeight={() => setTab("weight")} onEdit={(id) => setPlanEditor(weekUp.state.plans.find((plan) => plan.id === id) ?? null)} onUndo={undoPlan} onRemove={(id) => void weekUp.dispatch({ type: "plan.remove", id })} onRescheduleOverdue={(id) => setOverdueEditor(weekUp.state.plans.find((plan) => plan.id === id) ?? null)} />}
+          {tab === "today" && <TodayView plans={plans} attributes={attributes} completionFacts={weekUp.state.completionFacts} weights={weights} onComplete={completePlan} onExternalComplete={completeLearningPlan} onQuickAdd={() => openQuickAdd()} onOpenWeight={() => setTab("weight")} onEdit={(id) => setPlanEditor(weekUp.state.plans.find((plan) => plan.id === id) ?? null)} onUndo={undoPlan} onRemove={(id) => void weekUp.dispatch({ type: "plan.remove", id })} onRescheduleOverdue={(id) => setOverdueEditor(weekUp.state.plans.find((plan) => plan.id === id) ?? null)} />}
           {tab === "week" && <WeekDashboard attributes={attributes} plans={plans} planRecords={weekUp.state.plans.filter((plan) => plan.removedAt === undefined)} goals={weekUp.state.goals} settlements={weekUp.state.settlements} initialRange={selectedWeekRange} generatingHarvestIds={weekUp.generatingHarvestIds} onRetryHarvest={(id) => void weekUp.dispatch({ type: "settlement.harvest.retry", id })} onNewGoal={() => setGoalEditor({ period: "week" })} onEditGoal={(goal) => setGoalEditor({ period: "week", initial: goal })} onQuickAdd={(goalIds) => openQuickAdd(undefined, goalIds)} onOpenCalendar={() => openCalendar("week")} onOpenGrowth={() => setTab("growth")} onComplete={completePlan} onEditPlan={(id) => setPlanEditor(weekUp.state.plans.find((plan) => plan.id === id) ?? null)} onUndoPlan={undoPlan} onRemovePlan={(id) => void weekUp.dispatch({ type: "plan.remove", id })} onRescheduleOverdue={(id) => setOverdueEditor(weekUp.state.plans.find((plan) => plan.id === id) ?? null)} />}
           {tab === "month" && <MonthDashboard attributes={attributes} plans={plans} planRecords={weekUp.state.plans.filter((plan) => plan.removedAt === undefined)} goals={weekUp.state.goals} projects={weekUp.state.projects} projectCategories={weekUp.state.projectCategories} settlements={weekUp.state.settlements} weights={weights} generatingHarvestIds={weekUp.generatingHarvestIds} onRetryHarvest={(id) => void weekUp.dispatch({ type: "settlement.harvest.retry", id })} onNewGoal={() => setGoalEditor({ period: "month" })} onEditGoal={(goal) => setGoalEditor({ period: "month", initial: goal })} onOpenWeek={(weekRange) => { setSelectedWeekRange(weekRange); setTab("week"); }} onOpenCalendar={() => openCalendar("month")} onOpenWeight={() => setTab("weight")} />}
           {tab === "calendar" && <CalendarView plans={plans} initialMode={calendarInitialMode} onEditPlan={(id) => setPlanEditor(weekUp.state.plans.find((plan) => plan.id === id) ?? null)} />}
