@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { dayIndexFor, projectWeekUpView } from "../lib/use-week-up.ts";
-import { createEmptyWeekUpState } from "../lib/week-up-domain.ts";
+import { createEmptyWeekUpState, dispatchWeekUp } from "../lib/week-up-domain.ts";
 
 test("projects Shanghai Monday as day zero without a UTC rollover", () => {
   const monday = new Date("2026-07-20T04:00:00+08:00");
@@ -17,4 +17,61 @@ test("keeps archived attributes in the badge catalog but out of configuration pr
   const view = projectWeekUpView({ ...createEmptyWeekUpState(), attributes: [active, archived] });
   assert.deepEqual(view.attributes.map((item) => item.id), ["active"]);
   assert.deepEqual(view.catalogAttributes.map((item) => item.id), ["active", "archived"]);
+});
+
+test("keeps schedule projection separate from completed execution timeline", () => {
+  let sequence = 0;
+  let now = "2026-07-28T08:00:00.000Z";
+  const context = {
+    now: () => now,
+    id: (prefix) => `${prefix}-${++sequence}`,
+  };
+  const run = (state, command) => dispatchWeekUp(state, command, context).state;
+  let state = createEmptyWeekUpState();
+  state = run(state, {
+    type: "plan.create",
+    value: {
+      title: "Future work",
+      detail: "",
+      category: "Work",
+      startAt: "2026-07-29T17:00:00+08:00",
+      endAt: "2026-07-29T19:00:00+08:00",
+      goalIds: [],
+      rewards: [],
+    },
+  });
+  const completedPlanId = state.plans[0].id;
+  state = run(state, {
+    type: "plan.create",
+    value: {
+      title: "Scheduled only",
+      detail: "",
+      category: "Work",
+      startAt: "2026-07-28T20:00:00+08:00",
+      endAt: "2026-07-28T21:00:00+08:00",
+      goalIds: [],
+      rewards: [],
+    },
+  });
+  now = "2026-07-28T12:00:00.000Z";
+  state = run(state, {
+    type: "plan.complete",
+    id: completedPlanId,
+    completedAt: "2026-07-28T11:00:00+08:00",
+    actualSegments: [{
+      startAt: "2026-07-28T10:00:00+08:00",
+      endAt: "2026-07-28T11:00:00+08:00",
+    }],
+  });
+
+  const view = projectWeekUpView(state, new Date("2026-07-28T12:00:00+08:00"));
+  const scheduled = view.plans.find((item) => item.id === completedPlanId);
+  assert.equal(scheduled.scheduledDate, "2026-07-29");
+  assert.equal(scheduled.start, "17:00");
+  assert.equal(scheduled.completed, true);
+  assert.equal(scheduled.completedEarly, true);
+  assert.deepEqual(
+    view.timelinePlans.map(({ calendarSourceId, scheduledDate, start, end }) => ({ calendarSourceId, scheduledDate, start, end })),
+    [{ calendarSourceId: completedPlanId, scheduledDate: "2026-07-28", start: "10:00", end: "11:00" }],
+  );
 });

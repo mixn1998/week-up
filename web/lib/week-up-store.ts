@@ -3,6 +3,7 @@ import type { WeekUpRepository } from "./week-up-repository.ts";
 
 export type WeekUpStore = Readonly<{
   load(): Promise<WeekUpState>;
+  refresh(): Promise<WeekUpState>;
   snapshot(): WeekUpState;
   dispatch(command: WeekUpCommand): Promise<WeekUpState>;
   replace(state: WeekUpState): Promise<WeekUpState>;
@@ -16,21 +17,40 @@ function defaultContext(): DomainContext {
 export function createWeekUpStore(repository: WeekUpRepository, context = defaultContext()): WeekUpStore {
   let state = createEmptyWeekUpState();
   const listeners = new Set<(value: WeekUpState) => void>();
-  let writeQueue = Promise.resolve();
+  let operationQueue: Promise<void> = Promise.resolve();
   const publish = () => listeners.forEach((listener) => listener(state));
+  const enqueue = <T>(operation: () => Promise<T>): Promise<T> => {
+    const queued = operationQueue.then(operation);
+    operationQueue = queued.then(() => undefined, () => undefined);
+    return queued;
+  };
+  const accept = (next: WeekUpState, shouldPublish = next !== state) => {
+    if (shouldPublish) {
+      state = next;
+      publish();
+    }
+    return state;
+  };
   return {
-    async load() { state = await repository.load(); publish(); return state; },
-    snapshot() { return state; },
-    async dispatch(command) {
-      const operation = writeQueue.then(async () => {
-        const next = await repository.dispatch(state, command, context);
-        if (next !== state) { state = next; publish(); }
-        return state;
-      });
-      writeQueue = operation.then(() => undefined, () => undefined);
-      return operation;
+    load() {
+      return enqueue(async () => accept(await repository.load(), true));
     },
-    async replace(next) { state = await repository.replace(next); publish(); return state; },
+    refresh() {
+      return enqueue(async () => {
+        const next = await repository.refresh(state);
+        return accept(next, next.revision !== state.revision);
+      });
+    },
+    snapshot() { return state; },
+    dispatch(command) {
+      return enqueue(async () => {
+        const next = await repository.dispatch(state, command, context);
+        return accept(next);
+      });
+    },
+    replace(next) {
+      return enqueue(async () => accept(await repository.replace(next), true));
+    },
     subscribe(listener) { listeners.add(listener); return () => listeners.delete(listener); },
   };
 }

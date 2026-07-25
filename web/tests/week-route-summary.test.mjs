@@ -32,3 +32,14 @@ test("a day is lit only when every scheduled plan is complete", () => {
     label: "2/2 完成",
   });
 });
+
+test("uses the frozen daily settlement after current plans are rescheduled", () => {
+  const summary = summarizeWeekRouteDay(
+    Array.from({ length: 6 }, () => ({ completed: true })),
+    { planIds: ["p1", "p2", "p3", "p4", "p5", "p6", "p7"], completedPlanIds: ["p1", "p2", "p3", "p4", "p5", "p6"] },
+  );
+  assert.equal(summary.total, 7);
+  assert.equal(summary.completed, 6);
+  assert.equal(summary.progress, 86);
+  assert.equal(summary.lit, false);
+});

@@ -3,6 +3,7 @@ import { applyWeekUpStatePatch, type WeekUpStatePatch } from "./state-patch.ts";
 
 export interface WeekUpRepository {
   load(): Promise<WeekUpState>;
+  refresh(state: WeekUpState): Promise<WeekUpState>;
   dispatch(state: WeekUpState, command: WeekUpCommand, context: DomainContext): Promise<WeekUpState>;
   replace(state: WeekUpState): Promise<WeekUpState>;
   clear(): Promise<void>;
@@ -12,6 +13,9 @@ export class MemoryWeekUpRepository implements WeekUpRepository {
   #state: WeekUpState;
   constructor(initial = createEmptyWeekUpState()) { this.#state = structuredClone(initial); }
   async load(): Promise<WeekUpState> { return structuredClone(this.#state); }
+  async refresh(state: WeekUpState): Promise<WeekUpState> {
+    return state.revision === this.#state.revision ? state : structuredClone(this.#state);
+  }
   async dispatch(state: WeekUpState, command: WeekUpCommand, context: DomainContext): Promise<WeekUpState> {
     this.#state = structuredClone(dispatchWeekUp(state, command, context).state);
     return structuredClone(this.#state);
@@ -61,6 +65,11 @@ export class IndexedDbWeekUpRepository implements WeekUpRepository {
         request.onerror = () => reject(request.error ?? new Error("indexed_db_read_failed"));
       });
     } finally { db.close(); }
+  }
+
+  async refresh(state: WeekUpState): Promise<WeekUpState> {
+    const current = await this.load();
+    return current.revision === state.revision ? state : current;
   }
 
   private async save(state: WeekUpState): Promise<void> {
@@ -177,6 +186,22 @@ export class HttpWeekUpRepository implements WeekUpRepository {
     } catch (error) {
       if (!(error instanceof WeekUpHttpResponseError)) this.setStatus("offline");
       if (cached.revision > 0) return cached;
+      throw error;
+    }
+  }
+
+  async refresh(state: WeekUpState): Promise<WeekUpState> {
+    try {
+      const response = await this.fetcher("/api/health", { headers: { accept: "application/json" } });
+      this.setStatus("online");
+      const body = await response.json() as { revision?: number; error?: string };
+      if (!response.ok || typeof body.revision !== "number") {
+        throw new WeekUpHttpResponseError(body.error ?? `week_up_http_${response.status}`, response.status);
+      }
+      if (body.revision === state.revision) return state;
+      return await this.request("/api/state");
+    } catch (error) {
+      if (!(error instanceof WeekUpHttpResponseError)) this.setStatus("offline");
       throw error;
     }
   }

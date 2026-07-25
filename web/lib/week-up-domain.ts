@@ -2,7 +2,7 @@ import { colorIdForCategory, isCategoryColorId } from "./category-palette.ts";
 
 import { canRescheduleInsideWeekUp, participatesInOverdueQueue } from "./overdue-policy.ts";
 
-export const WEEK_UP_SCHEMA_VERSION = 14 as const;
+export const WEEK_UP_SCHEMA_VERSION = 16 as const;
 
 export type AiProviderId = "codex-cli" | "api";
 
@@ -125,6 +125,18 @@ export type CompletionFact = Readonly<{
   revertedAt?: string;
 }>;
 
+export type ExecutionRecord = Readonly<{
+  id: string;
+  planId: string;
+  planSegmentId?: string;
+  startAt: string;
+  endAt: string;
+  source: "week-up" | "learning-more";
+  recordedAt: string;
+  completionFactId?: string;
+  revertedAt?: string;
+}>;
+
 export type XpTransaction = Readonly<{
   id: string;
   attributeId: string;
@@ -164,6 +176,14 @@ export type SettlementRecord = Readonly<{
   }>;
 }>;
 
+export type DailySettlementRecord = Readonly<{
+  id: string;
+  localDate: string;
+  settledAt: string;
+  planIds: readonly string[];
+  completedPlanIds: readonly string[];
+}>;
+
 export type SkillbookRecord = Readonly<{
   id: string;
   courseId: string;
@@ -199,8 +219,10 @@ export type WeekUpState = Readonly<{
   goals: readonly GoalRecord[];
   plans: readonly PlanRecord[];
   completionFacts: readonly CompletionFact[];
+  executionRecords: readonly ExecutionRecord[];
   xpTransactions: readonly XpTransaction[];
   weightRevisions: readonly WeightRevision[];
+  dailySettlements: readonly DailySettlementRecord[];
   settlements: readonly SettlementRecord[];
   skillbooks: readonly SkillbookRecord[];
   preferences: Readonly<{ targetWeightKg?: number }>;
@@ -271,13 +293,14 @@ export type WeekUpCommand =
   | { type: "plan.recurrence.update"; id: string; patch: Pick<PlanRecord, "title" | "detail" | "category" | "startAt" | "endAt" | "goalIds" | "rewards"> & Partial<Pick<PlanRecord, "timeSegments" | "timeStatus">> & { unitQuantity?: number } }
   | { type: "plan.recurrence.cancel"; id: string }
   | { type: "plan.overdue.reschedule"; id: string; startAt: string; endAt: string; timeSegments?: readonly PlanTimeSegmentInput[]; timeStatus?: PlanRecord["timeStatus"] }
-  | { type: "plan.complete"; id: string; source?: CompletionFact["source"]; externalFactId?: string; completedAt?: string }
+  | { type: "plan.complete"; id: string; source?: CompletionFact["source"]; externalFactId?: string; completedAt?: string; actualSegments?: readonly PlanTimeSegmentInput[] }
   | { type: "plan.undo"; id: string }
-  | { type: "plan.segment.complete"; id: string; segmentId: string; completedAt?: string }
+  | { type: "plan.segment.complete"; id: string; segmentId: string; completedAt?: string; actualSegment?: PlanTimeSegmentInput }
   | { type: "plan.segment.undo"; id: string; segmentId: string }
   | { type: "plan.follow-template"; id: string }
   | { type: "weight.record"; localDate: string; valueKg: number }
   | { type: "weight.target"; valueKg?: number }
+  | { type: "daily-settlement.generate"; localDate: string }
   | { type: "settlement.generate"; period: SettlementRecord["period"]; startDate: string; endDate: string }
   | { type: "settlement.harvest.succeeded"; id: string; text: string; provider: AiProviderId; preferredProvider: AiProviderId; fallbackUsed: boolean; model?: string; reasoningEffort?: string }
   | { type: "settlement.harvest.failed"; id: string; message: string }
@@ -304,8 +327,10 @@ export function createEmptyWeekUpState(baseUrl = "/learning-more-api"): WeekUpSt
     goals: [],
     plans: [],
     completionFacts: [],
+    executionRecords: [],
     xpTransactions: [],
     weightRevisions: [],
+    dailySettlements: [],
     settlements: [],
     skillbooks: [],
     preferences: {},
@@ -545,6 +570,48 @@ function planIsOverdue(plan: PlanRecord, at: string): boolean {
     && localDate(plan.startAt) < localDate(at);
 }
 
+function dailySettlementSnapshot(state: WeekUpState, localDateValue: string) {
+  const plans = state.plans.filter((plan) =>
+    plan.removedAt === undefined && localDate(plan.startAt) === localDateValue
+  );
+  const completedIds = new Set(
+    state.completionFacts
+      .filter((fact) => fact.revertedAt === undefined)
+      .map((fact) => fact.planId),
+  );
+  return {
+    planIds: plans.map((plan) => plan.id),
+    completedPlanIds: plans.filter((plan) => completedIds.has(plan.id)).map((plan) => plan.id),
+  };
+}
+
+function freezePastDailySettlements(
+  state: WeekUpState,
+  now: string,
+  context: DomainContext,
+): WeekUpState {
+  const today = localDate(now);
+  const existingDates = new Set(state.dailySettlements.map((settlement) => settlement.localDate));
+  const dueDates = [...new Set(
+    state.plans
+      .filter((plan) => plan.removedAt === undefined && localDate(plan.startAt) < today)
+      .map((plan) => localDate(plan.startAt)),
+  )].filter((date) => !existingDates.has(date)).sort();
+  if (dueDates.length === 0) return state;
+  return {
+    ...state,
+    dailySettlements: [
+      ...state.dailySettlements,
+      ...dueDates.map((date): DailySettlementRecord => ({
+        id: context.id("daily-settlement"),
+        localDate: date,
+        settledAt: now,
+        ...dailySettlementSnapshot(state, date),
+      })),
+    ],
+  };
+}
+
 function settlementSnapshot(state: WeekUpState, startDate: string, endDate: string, generatedAt: string) {
   const plans = state.plans.filter((plan) => localDate(plan.startAt) >= startDate && localDate(plan.startAt) <= endDate && plan.removedAt === undefined);
   const completedFacts = state.completionFacts.filter((fact) => fact.revertedAt === undefined && plans.some((plan) => plan.id === fact.planId));
@@ -584,20 +651,53 @@ function completePlan(
   state: WeekUpState,
   planId: string,
   context: DomainContext,
-  options: { source: CompletionFact["source"]; externalFactId?: string; completedAt: string },
+  options: { source: CompletionFact["source"]; externalFactId?: string; completedAt: string; actualSegments?: readonly PlanTimeSegmentInput[] },
 ): CommandOutcome {
   const plan = state.plans.find((item) => item.id === planId && item.removedAt === undefined);
   if (!plan) throw new Error("plan_not_found");
   if (options.source === "week-up" && planIsOverdue(plan, options.completedAt)) throw new Error("plan_overdue");
   const duplicateExternal = options.externalFactId && state.completionFacts.find((fact) => fact.externalFactId === options.externalFactId && fact.revertedAt === undefined);
-  if (duplicateExternal) return unchanged(state, duplicateExternal.id);
+  if (duplicateExternal) {
+    const executionRecords = appendExecutionRecords(
+      state.executionRecords,
+      planId,
+      options.source,
+      options.actualSegments,
+      context,
+      options.completedAt,
+      duplicateExternal.id,
+    );
+    return executionRecords === state.executionRecords
+      ? unchanged(state, duplicateExternal.id)
+      : changed(state, { executionRecords }, duplicateExternal.id);
+  }
   const existing = activeCompletion(state, planId);
   if (existing) {
     if (options.source === "learning-more" && existing.source === "week-up" && options.externalFactId) {
       const facts = state.completionFacts.map((fact) => fact.id === existing.id ? { ...fact, externalFactId: options.externalFactId } : fact);
-      return changed(state, { completionFacts: facts }, existing.id);
+      const executionRecords = appendExecutionRecords(
+        state.executionRecords,
+        planId,
+        options.source,
+        options.actualSegments,
+        context,
+        options.completedAt,
+        existing.id,
+      );
+      return changed(state, { completionFacts: facts, executionRecords }, existing.id);
     }
-    return unchanged(state, existing.id);
+    const executionRecords = appendExecutionRecords(
+      state.executionRecords,
+      planId,
+      options.source,
+      options.actualSegments,
+      context,
+      options.completedAt,
+      existing.id,
+    );
+    return executionRecords === state.executionRecords
+      ? unchanged(state, existing.id)
+      : changed(state, { executionRecords }, existing.id);
   }
   const factId = context.id("completion");
   const rewardSnapshot = plan.rewards.map((reward) => ({ ...reward }));
@@ -619,8 +719,57 @@ function completePlan(
   }));
   return changed(state, {
     completionFacts: [...state.completionFacts, fact],
+    executionRecords: appendExecutionRecords(
+      state.executionRecords,
+      planId,
+      options.source,
+      options.actualSegments,
+      context,
+      options.completedAt,
+      factId,
+    ),
     xpTransactions: [...state.xpTransactions, ...transactions],
   }, factId);
+}
+
+function appendExecutionRecords(
+  current: readonly ExecutionRecord[],
+  planId: string,
+  source: ExecutionRecord["source"],
+  segments: readonly PlanTimeSegmentInput[] | undefined,
+  context: DomainContext,
+  recordedAt: string,
+  completionFactId?: string,
+  planSegmentId?: string,
+): readonly ExecutionRecord[] {
+  if (!segments?.length) return current;
+  const normalized = segments
+    .map((segment) => {
+      assertPeriod(segment.startAt, segment.endAt);
+      return segment;
+    })
+    .sort((left, right) => left.startAt.localeCompare(right.startAt));
+  const additions = normalized.flatMap((segment): ExecutionRecord[] => {
+    const duplicate = current.some((record) =>
+      record.revertedAt === undefined
+      && record.planId === planId
+      && record.planSegmentId === planSegmentId
+      && record.startAt === segment.startAt
+      && record.endAt === segment.endAt
+    );
+    if (duplicate) return [];
+    return [{
+      id: context.id("execution"),
+      planId,
+      ...(planSegmentId ? { planSegmentId } : {}),
+      startAt: segment.startAt,
+      endAt: segment.endAt,
+      source,
+      recordedAt,
+      ...(completionFactId ? { completionFactId } : {}),
+    }];
+  });
+  return additions.length ? [...current, ...additions] : current;
 }
 
 function revertPlanCompletionInState(state: WeekUpState, planId: string, context: DomainContext, now: string): WeekUpState {
@@ -637,6 +786,7 @@ function revertPlanCompletionInState(state: WeekUpState, planId: string, context
   return {
     ...state,
     completionFacts: state.completionFacts.map((item) => item.id === fact.id ? { ...item, revertedAt: now } : item),
+    executionRecords: state.executionRecords.map((item) => item.planId === planId && item.revertedAt === undefined ? { ...item, revertedAt: now } : item),
     xpTransactions: [...state.xpTransactions, ...compensation],
   };
 }
@@ -1297,6 +1447,7 @@ export function dispatchWeekUp(state: WeekUpState, command: WeekUpCommand, conte
         source: command.source ?? "week-up",
         ...(command.externalFactId ? { externalFactId: command.externalFactId } : {}),
         completedAt,
+        ...(command.actualSegments?.length ? { actualSegments: command.actualSegments } : {}),
       });
       const refreshed = refreshSettlementsAfterFactChanges(outcome.state, now);
       if (refreshed === outcome.state) return outcome;
@@ -1311,6 +1462,7 @@ export function dispatchWeekUp(state: WeekUpState, command: WeekUpCommand, conte
       return changed(state, {
         plans: reverted.plans.map((plan) => plan.id === command.id && plan.timeSegments?.length ? { ...plan, timeSegments: plan.timeSegments.map((segment) => ({ id: segment.id, startAt: segment.startAt, endAt: segment.endAt })), updatedAt: now } : plan),
         completionFacts: reverted.completionFacts,
+        executionRecords: reverted.executionRecords,
         xpTransactions: reverted.xpTransactions,
       }, fact.id);
     }
@@ -1324,8 +1476,23 @@ export function dispatchWeekUp(state: WeekUpState, command: WeekUpCommand, conte
       if (segments.find((segment) => segment.id === command.segmentId)?.completedAt) return unchanged(state, command.segmentId);
       const completedAt = command.completedAt ?? now;
       const updatedPlan: PlanRecord = { ...plan, timeSegments: segments.map((segment) => segment.id === command.segmentId ? { ...segment, completedAt } : segment), updatedAt: now };
-      const prepared = { ...state, plans: state.plans.map((item) => item.id === plan.id ? updatedPlan : item) };
-      if (!allSegmentsCompleted(updatedPlan)) return changed(state, { plans: prepared.plans }, command.segmentId);
+      const executionRecords = appendExecutionRecords(
+        state.executionRecords,
+        plan.id,
+        "week-up",
+        command.actualSegment ? [command.actualSegment] : undefined,
+        context,
+        completedAt,
+        undefined,
+        command.segmentId,
+      );
+      const prepared = { ...state, plans: state.plans.map((item) => item.id === plan.id ? updatedPlan : item), executionRecords };
+      if (!allSegmentsCompleted(updatedPlan)) {
+        return changed(state, {
+          plans: prepared.plans,
+          executionRecords: prepared.executionRecords,
+        }, command.segmentId);
+      }
       const outcome = completePlan(prepared, plan.id, context, { source: "week-up", completedAt });
       const refreshed = refreshSettlementsAfterFactChanges(outcome.state, now);
       return refreshed === outcome.state ? outcome : { ...outcome, state: refreshed };
@@ -1338,8 +1505,13 @@ export function dispatchWeekUp(state: WeekUpState, command: WeekUpCommand, conte
       if (!segment.completedAt) return unchanged(state, command.segmentId);
       const reverted = revertPlanCompletionInState(state, plan.id, context, now);
       const plans = reverted.plans.map((item) => item.id === plan.id ? { ...item, timeSegments: item.timeSegments?.map((entry) => entry.id === command.segmentId ? { id: entry.id, startAt: entry.startAt, endAt: entry.endAt } : entry), updatedAt: now } : item);
-      const refreshed = refreshSettlementsAfterFactChanges({ ...reverted, plans }, now);
-      return changed(state, { plans: refreshed.plans, completionFacts: refreshed.completionFacts, xpTransactions: refreshed.xpTransactions, settlements: refreshed.settlements }, command.segmentId);
+      const executionRecords = state.executionRecords.map((record) =>
+        record.planId === plan.id && record.planSegmentId === command.segmentId && record.revertedAt === undefined
+          ? { ...record, revertedAt: now }
+          : record
+      );
+      const refreshed = refreshSettlementsAfterFactChanges({ ...reverted, plans, executionRecords }, now);
+      return changed(state, { plans: refreshed.plans, completionFacts: refreshed.completionFacts, executionRecords: refreshed.executionRecords, xpTransactions: refreshed.xpTransactions, settlements: refreshed.settlements }, command.segmentId);
     }
     case "plan.follow-template": {
       const plan = state.plans.find((item) => item.id === command.id && item.removedAt === undefined);
@@ -1370,6 +1542,19 @@ export function dispatchWeekUp(state: WeekUpState, command: WeekUpCommand, conte
     case "weight.target": {
       if (command.valueKg !== undefined && (!Number.isFinite(command.valueKg) || command.valueKg < 20 || command.valueKg > 300)) throw new Error("weight_target_invalid");
       return changed(state, { preferences: command.valueKg === undefined ? {} : { targetWeightKg: Math.round(command.valueKg * 10) / 10 } });
+    }
+    case "daily-settlement.generate": {
+      const existing = state.dailySettlements.find((item) => item.localDate === command.localDate);
+      if (existing) return unchanged(state, existing.id);
+      if (command.localDate >= localDate(now)) throw new Error("daily_settlement_not_due");
+      const id = context.id("daily-settlement");
+      const settlement: DailySettlementRecord = {
+        id,
+        localDate: command.localDate,
+        settledAt: now,
+        ...dailySettlementSnapshot(state, command.localDate),
+      };
+      return changed(state, { dailySettlements: [...state.dailySettlements, settlement] }, id);
     }
     case "settlement.generate": {
       const key = `${command.period}:${command.startDate}:${command.endDate}`;
@@ -1420,8 +1605,8 @@ export function dispatchWeekUp(state: WeekUpState, command: WeekUpCommand, conte
     case "learning-more.failed":
       return changed(state, { learningMore: { ...state.learningMore, lastError: command.message } });
     case "learning-more.import": {
-      let next = state;
-      let didChange = false;
+      let next = freezePastDailySettlements(state, now, context);
+      let didChange = next !== state;
       if (command.courses !== undefined) {
         const resolvedCategory = ensureLearningMoreProjectCategory(next, context, now);
         const learningMoreCategory = resolvedCategory.category.name;
@@ -1629,38 +1814,12 @@ export function dispatchWeekUp(state: WeekUpState, command: WeekUpCommand, conte
           Number.isFinite(Date.parse(actualStart)) &&
           Number.isFinite(Date.parse(actualEnd)) &&
           Date.parse(actualEnd) > Date.parse(actualStart);
-        const completionDate = localDate(fact.occurredAt);
-        if (hasActualRange && (plan.startAt !== actualStart || plan.endAt !== actualEnd || plan.timeStatus !== "scheduled")) {
-          next = {
-            ...next,
-            plans: next.plans.map((item) => item.id === plan.id
-              ? { ...item, startAt: actualStart, endAt: actualEnd, timeSegments: [{ id: `${plan.id}:learning-more:actual`, startAt: actualStart, endAt: actualEnd, completedAt: fact.occurredAt }], timeStatus: "scheduled", updatedAt: now }
-              : item),
-          };
-          didChange = true;
-        } else if (!hasActualRange && completionDate > localDate(plan.startAt)) {
-          next = {
-            ...next,
-            plans: next.plans.map((item) => item.id === plan.id
-              ? {
-                  ...item,
-                  startAt: `${completionDate}T00:00:00+08:00`,
-                  endAt: `${completionDate}T01:00:00+08:00`,
-                  timeSegments: [],
-                  timeStatus: "unscheduled",
-                  updatedAt: now,
-                }
-              : item),
-          };
-          didChange = true;
-        } else {
-          next = {
-            ...next,
-            plans: next.plans.map((item) => item.id === plan.id && item.timeSegments?.length
-              ? { ...item, timeSegments: item.timeSegments.map((segment) => ({ ...segment, completedAt: segment.completedAt ?? fact.occurredAt })), updatedAt: now }
-              : item),
-          };
-        }
+        next = {
+          ...next,
+          plans: next.plans.map((item) => item.id === plan.id && item.timeSegments?.length
+            ? { ...item, timeSegments: item.timeSegments.map((segment) => ({ ...segment, completedAt: segment.completedAt ?? fact.occurredAt })), updatedAt: now }
+            : item),
+        };
         const duplicateExternal = fact.factId
           ? next.completionFacts.find((item) => item.externalFactId === fact.factId && item.revertedAt === undefined)
           : undefined;
@@ -1677,7 +1836,12 @@ export function dispatchWeekUp(state: WeekUpState, command: WeekUpCommand, conte
             didChange = true;
           }
         }
-        const outcome = completePlan(next, plan.id, context, { source: "learning-more", externalFactId: fact.factId, completedAt: fact.occurredAt });
+        const outcome = completePlan(next, plan.id, context, {
+          source: "learning-more",
+          externalFactId: fact.factId,
+          completedAt: fact.occurredAt,
+          ...(hasActualRange ? { actualSegments: [{ startAt: actualStart, endAt: actualEnd }] } : {}),
+        });
         if (outcome.changed) { next = outcome.state; didChange = true; }
       }
       const cleaned = recalculateXpFromTemplates(removeDuplicateLearningMorePlans(reconcileLearningMoreHistoryMirrors(next, context, now), context, now), context, now);
@@ -1720,20 +1884,21 @@ export function migrateWeekUpState(value: unknown): WeekUpState {
   if (value === undefined || value === null) return createEmptyWeekUpState();
   if (typeof value !== "object") throw new Error("database_state_invalid");
   const version = (value as { schemaVersion?: unknown }).schemaVersion;
-  if (version !== 1 && version !== 2 && version !== 3 && version !== 4 && version !== 5 && version !== 6 && version !== 7 && version !== 8 && version !== 9 && version !== 10 && version !== 11 && version !== 12 && version !== 13 && version !== WEEK_UP_SCHEMA_VERSION) throw new Error("database_schema_unsupported");
+  if (version !== 1 && version !== 2 && version !== 3 && version !== 4 && version !== 5 && version !== 6 && version !== 7 && version !== 8 && version !== 9 && version !== 10 && version !== 11 && version !== 12 && version !== 13 && version !== 14 && version !== 15 && version !== WEEK_UP_SCHEMA_VERSION) throw new Error("database_schema_unsupported");
   type MigratableSettlement = Omit<SettlementRecord, "harvest"> & {
     harvest?: SettlementRecord["harvest"];
     reflection?: string;
   };
   type MigratableCategory = Omit<AttributeCategoryRecord, "color"> & { color?: string };
-  const raw = value as Omit<WeekUpState, "schemaVersion" | "attributeCategories" | "projectCategories" | "plans" | "projects" | "learningMoreCourses" | "learningMoreLessons" | "settlements" | "aiReview"> & {
-    schemaVersion: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14;
+  const raw = value as Omit<WeekUpState, "schemaVersion" | "attributeCategories" | "projectCategories" | "plans" | "projects" | "learningMoreCourses" | "learningMoreLessons" | "executionRecords" | "dailySettlements" | "settlements" | "aiReview"> & {
+    schemaVersion: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 16;
     attributeCategories?: readonly MigratableCategory[];
     projectCategories?: readonly MigratableCategory[];
     plans: readonly (Omit<PlanRecord, "rewardMode"> & Partial<Pick<PlanRecord, "rewardMode">>)[];
     projects?: readonly ProjectRecord[];
     learningMoreCourses?: readonly LearningMoreCourse[];
     learningMoreLessons?: readonly (Omit<LearningMoreLesson, "scheduleItemId" | "scheduledDate"> & Partial<Pick<LearningMoreLesson, "scheduleItemId" | "scheduledDate">>)[];
+    executionRecords?: readonly ExecutionRecord[];
     settlements: readonly MigratableSettlement[];
     aiReview?: Partial<AiReviewState> & { baseUrl: string };
     preferences?: WeekUpState["preferences"];
@@ -1811,6 +1976,8 @@ export function migrateWeekUpState(value: unknown): WeekUpState {
     }),
     learningMoreCourses: raw.schemaVersion < 5 ? [] : raw.learningMoreCourses ?? [],
     learningMoreLessons: raw.schemaVersion < 5 ? [] : (raw.learningMoreLessons ?? []).map((lesson, index) => ({ ...lesson, scheduleItemId: lesson.scheduleItemId!, scheduledDate: lesson.scheduledDate!, order: lesson.order ?? index })),
+    executionRecords: raw.executionRecords ?? [],
+    dailySettlements: "dailySettlements" in raw && Array.isArray(raw.dailySettlements) ? raw.dailySettlements : [],
     settlements: (raw.settlements ?? []).map(({ reflection: _legacyReflection, ...settlement }) => ({
       ...settlement,
       harvest: settlement.harvest ?? { status: "pending" },

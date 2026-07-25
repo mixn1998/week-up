@@ -63,6 +63,32 @@ test("persists CRUD state and serializes writes through the store", async () => 
   assert.equal(reloaded.snapshot().attributes.length, 2);
 });
 
+test("freezes an elapsed Learning MORE day before a later course reschedule", () => {
+  const h = harness("2026-07-24T08:00:00.000Z");
+  let state = createEmptyWeekUpState();
+  state = h.run(state, {
+    type: "learning-more.import",
+    courses: [{ courseId: "course-1", title: "课程一", status: "active" }],
+    lessons: [{ courseId: "course-1", lessonId: "lesson-1", scheduleItemId: "schedule-1", scheduledDate: "2026-07-24", title: "课节一", order: 1 }],
+    facts: [],
+  });
+  const originalPlanId = state.plans[0].id;
+  h.setNow("2026-07-25T08:00:00.000Z");
+  state = h.run(state, {
+    type: "learning-more.import",
+    lessons: [{ courseId: "course-1", lessonId: "lesson-1", scheduleItemId: "schedule-1", scheduledDate: "2026-07-26", title: "课节一", order: 1 }],
+    facts: [],
+  });
+  assert.equal(state.plans.find((plan) => plan.id === originalPlanId).startAt.slice(0, 10), "2026-07-26");
+  assert.deepEqual(state.dailySettlements, [{
+      id: "daily-settlement-4",
+    localDate: "2026-07-24",
+    settledAt: "2026-07-25T08:00:00.000Z",
+    planIds: [originalPlanId],
+    completedPlanIds: [],
+  }]);
+});
+
 test("automatically reconnects persistence after a temporary local service outage", async () => {
   const cached = { ...createEmptyWeekUpState(), revision: 2 };
   const server = { ...createEmptyWeekUpState(), revision: 3 };
@@ -105,6 +131,39 @@ test("keeps persistence online when the server returns an application error", as
   failing = true;
   await assert.rejects(() => repository.dispatch(state, { type: "plan.remove", id: "missing" }), /plan_not_found/);
   assert.equal(repository.status, "online");
+});
+
+test("refreshes the browser state only when the server revision changes", async () => {
+  const current = { ...createEmptyWeekUpState(), revision: 2 };
+  const updated = {
+    ...createEmptyWeekUpState(),
+    revision: 3,
+    learningMore: { ...createEmptyWeekUpState().learningMore, lastSyncAt: "2026-07-25T00:01:00.000Z" },
+  };
+  let server = current;
+  const requests = [];
+  const cache = {
+    async load() { return structuredClone(current); },
+    async replace(state) { return structuredClone(state); },
+  };
+  const fetcher = async (path) => {
+    requests.push(path);
+    if (path === "/api/health") {
+      return Response.json({ status: "ok", revision: server.revision });
+    }
+    if (path === "/api/state") {
+      return Response.json({ state: server });
+    }
+    return Response.json({ error: "not_found" }, { status: 404 });
+  };
+  const repository = new HttpWeekUpRepository(fetcher, cache);
+
+  assert.equal((await repository.refresh(current)).revision, 2);
+  assert.deepEqual(requests, ["/api/health"]);
+
+  server = updated;
+  assert.equal((await repository.refresh(current)).revision, 3);
+  assert.deepEqual(requests, ["/api/health", "/api/health", "/api/state"]);
 });
 
 test("rejects unsupported commands explicitly instead of returning an undefined outcome", () => {
@@ -216,7 +275,7 @@ test("creates unscheduled project and recurring plans with goal links", () => {
 
   state = h.run(state, { type: "project.plan.create", projectId, startAt: "2026-07-20T00:00:00+08:00", endAt: "2026-07-20T01:00:00+08:00", timeStatus: "unscheduled", timeSegments: [], goalIds: [goalId] });
   assert.equal(state.plans[0].timeStatus, "unscheduled");
-  assert.deepEqual(state.plans[0].timeSegments, []);
+  assert.deepEqual(state.plans[0].timeSegments ?? [], []);
   assert.deepEqual(state.plans[0].goalIds, [goalId]);
 
   state = h.run(state, { type: "plan.recurrence.create", projectId, startAts: ["2026-07-21T00:00:00+08:00", "2026-07-22T00:00:00+08:00"], endAts: ["2026-07-21T01:00:00+08:00", "2026-07-22T01:00:00+08:00"], timeStatus: "unscheduled", goalIds: [goalId], recurrenceGroupId: "repeat-unscheduled", recurrenceSummary: "每天 · 共 2 次" });
@@ -794,9 +853,13 @@ test("imports Learning MORE course tables and facts while Week UP owns schedule 
   ];
   const updatedLessons = [{ ...lessons[0], title: "概率论：条件概率" }];
   state = h.run(state, { type: "learning-more.import", courses: [{ courseId: "course-1", title: "概率论", status: "closed" }], lessons: updatedLessons, facts, nextCursor: "cursor-2" });
-  assert.equal(state.plans[0].startAt, "2026-07-20T02:12:00Z");
-  assert.equal(state.plans[0].endAt, "2026-07-20T03:47:00Z");
+  assert.equal(state.plans[0].startAt, "2026-07-20T09:00:00+08:00");
+  assert.equal(state.plans[0].endAt, "2026-07-20T10:00:00+08:00");
   assert.equal(state.plans[0].timeStatus, "scheduled");
+  assert.deepEqual(
+    state.executionRecords.map(({ startAt, endAt, source }) => ({ startAt, endAt, source })),
+    [{ startAt: "2026-07-20T02:12:00Z", endAt: "2026-07-20T03:47:00Z", source: "learning-more" }],
+  );
   assert.equal(state.plans[0].title, "概率论：条件概率");
   assert.equal(state.plans[0].rewards[0].amount, 3);
   assert.equal(totalXpForAttribute(state, state.attributes[0].id), 3);
@@ -809,7 +872,7 @@ test("imports Learning MORE course tables and facts while Week UP owns schedule 
   assert.equal(duplicate.plans[0].removedAt, undefined);
 });
 
-test("places a directly completed overdue Learning MORE lesson on its completion day", () => {
+test("keeps a directly completed overdue Learning MORE lesson on its original schedule", () => {
   const h = harness("2026-07-23T00:00:00.000Z");
   let state = addAttribute(h, createEmptyWeekUpState());
   const attributeId = state.attributes[0].id;
@@ -839,10 +902,11 @@ test("places a directly completed overdue Learning MORE lesson on its completion
   };
   state = h.run(state, { type: "learning-more.import", facts: [completion] });
 
-  assert.equal(state.plans[0].startAt, "2026-07-22T00:00:00+08:00");
+  assert.equal(state.plans[0].startAt, "2026-07-20T00:00:00+08:00");
   assert.equal(state.plans[0].timeStatus, "unscheduled");
-  assert.deepEqual(state.plans[0].timeSegments, []);
+  assert.deepEqual(state.plans[0].timeSegments ?? [], []);
   assert.equal(state.completionFacts[0].completedAt, completion.occurredAt);
+  assert.deepEqual(state.executionRecords, []);
   assert.equal(totalXpForAttribute(state, attributeId), 2);
 
   state = h.run(state, { type: "learning-more.import", facts: [completion] });
@@ -1118,4 +1182,165 @@ test("undoing one segment reopens the plan and compensates its single reward", (
   assert.equal(totalXpForAttribute(state, attributeId), 0);
   assert.equal(state.plans[0].timeSegments.find((segment) => segment.id === "first").completedAt, undefined);
   assert.ok(state.plans[0].timeSegments.find((segment) => segment.id === "second").completedAt);
+});
+
+test("keeps a future schedule in place when an ordinary plan is completed early", () => {
+  const h = harness("2026-07-20T08:00:00.000Z");
+  let state = addAttribute(h, createEmptyWeekUpState());
+  const attributeId = state.attributes[0].id;
+  state = addPlan(h, state, attributeId, {
+    startAt: "2026-07-21T17:00:00+08:00",
+    endAt: "2026-07-21T19:00:00+08:00",
+  });
+  const planId = state.plans[0].id;
+
+  state = h.run(state, {
+    type: "plan.complete",
+    id: planId,
+    completedAt: "2026-07-20T16:00:00+08:00",
+    actualSegments: [{
+      startAt: "2026-07-20T15:00:00+08:00",
+      endAt: "2026-07-20T16:00:00+08:00",
+    }],
+  });
+
+  assert.equal(state.plans[0].startAt, "2026-07-21T17:00:00+08:00");
+  assert.equal(state.plans[0].endAt, "2026-07-21T19:00:00+08:00");
+  assert.equal(state.completionFacts[0].completedAt, "2026-07-20T16:00:00+08:00");
+  assert.deepEqual(
+    state.executionRecords.map(({ planId: id, startAt, endAt, source }) => ({ id, startAt, endAt, source })),
+    [{
+      id: planId,
+      startAt: "2026-07-20T15:00:00+08:00",
+      endAt: "2026-07-20T16:00:00+08:00",
+      source: "week-up",
+    }],
+  );
+
+  h.setNow("2026-07-22T00:01:00+08:00");
+  state = h.run(state, { type: "daily-settlement.generate", localDate: "2026-07-21" });
+  assert.deepEqual(state.dailySettlements[0].planIds, [planId]);
+  assert.deepEqual(state.dailySettlements[0].completedPlanIds, [planId]);
+});
+
+test("records Learning MORE actual time without moving its original schedule", () => {
+  const h = harness("2026-07-20T08:00:00.000Z");
+  const course = { courseId: "course-actual", title: "Course", status: "active" };
+  const lesson = {
+    courseId: "course-actual",
+    lessonId: "lesson-actual",
+    scheduleItemId: "schedule-actual",
+    scheduledDate: "2026-07-21",
+    title: "Lesson",
+    order: 0,
+  };
+  let state = h.run(createEmptyWeekUpState(), {
+    type: "learning-more.import",
+    courses: [course],
+    lessons: [lesson],
+    facts: [],
+  });
+  const planId = state.plans[0].id;
+  const scheduledStart = state.plans[0].startAt;
+  const scheduledEnd = state.plans[0].endAt;
+
+  state = h.run(state, {
+    type: "learning-more.import",
+    facts: [{
+      factId: "fact-actual",
+      type: "lesson-completed",
+      occurredAt: "2026-07-20T16:00:00+08:00",
+      actualStartedAt: "2026-07-20T15:10:00+08:00",
+      actualEndedAt: "2026-07-20T16:00:00+08:00",
+      courseId: "course-actual",
+      lessonId: "lesson-actual",
+      scheduleItemId: "schedule-actual",
+    }],
+  });
+
+  assert.equal(state.plans[0].startAt, scheduledStart);
+  assert.equal(state.plans[0].endAt, scheduledEnd);
+  assert.equal(state.completionFacts[0].planId, planId);
+  assert.equal(state.completionFacts[0].completedAt, "2026-07-20T16:00:00+08:00");
+  assert.deepEqual(
+    state.executionRecords.map(({ planId: id, startAt, endAt, source }) => ({ id, startAt, endAt, source })),
+    [{
+      id: planId,
+      startAt: "2026-07-20T15:10:00+08:00",
+      endAt: "2026-07-20T16:00:00+08:00",
+      source: "learning-more",
+    }],
+  );
+});
+
+test("undoing one completed segment preserves other actual execution records", () => {
+  const h = harness();
+  let state = addAttribute(h, createEmptyWeekUpState());
+  state = addPlan(h, state, state.attributes[0].id, {
+    timeSegments: [
+      { id: "first", startAt: "2026-07-20T09:00:00+08:00", endAt: "2026-07-20T09:30:00+08:00" },
+      { id: "second", startAt: "2026-07-20T15:00:00+08:00", endAt: "2026-07-20T15:30:00+08:00" },
+    ],
+  });
+  const planId = state.plans[0].id;
+  state = h.run(state, {
+    type: "plan.segment.complete",
+    id: planId,
+    segmentId: "first",
+    completedAt: "2026-07-20T09:20:00+08:00",
+    actualSegment: { startAt: "2026-07-20T09:05:00+08:00", endAt: "2026-07-20T09:20:00+08:00" },
+  });
+  state = h.run(state, {
+    type: "plan.segment.complete",
+    id: planId,
+    segmentId: "second",
+    completedAt: "2026-07-20T15:25:00+08:00",
+    actualSegment: { startAt: "2026-07-20T15:05:00+08:00", endAt: "2026-07-20T15:25:00+08:00" },
+  });
+  state = h.run(state, { type: "plan.segment.undo", id: planId, segmentId: "first" });
+
+  assert.equal(state.executionRecords.find((record) => record.planSegmentId === "first").revertedAt !== undefined, true);
+  assert.equal(state.executionRecords.find((record) => record.planSegmentId === "second").revertedAt, undefined);
+});
+
+test("serializes load, dispatch, refresh, and replace through one store queue", async () => {
+  const h = harness();
+  const calls = [];
+  let persisted = createEmptyWeekUpState();
+  let releaseLoad;
+  const loadGate = new Promise((resolve) => { releaseLoad = resolve; });
+  const repository = {
+    async load() {
+      calls.push("load:start");
+      await loadGate;
+      calls.push("load:end");
+      return structuredClone(persisted);
+    },
+    async refresh(state) {
+      calls.push(`refresh:${state.revision}`);
+      return structuredClone(persisted);
+    },
+    async dispatch(state, command, context) {
+      calls.push(`dispatch:${state.revision}`);
+      persisted = dispatchWeekUp(state, command, context).state;
+      return structuredClone(persisted);
+    },
+    async replace(next) {
+      calls.push(`replace:${next.revision}`);
+      persisted = structuredClone(next);
+      return structuredClone(persisted);
+    },
+  };
+  const store = createWeekUpStore(repository, h.context);
+  const loading = store.load();
+  const dispatching = store.dispatch({
+    type: "attribute.create",
+    value: { name: "queued", icon: "mark-01", color: "cyan", note: "", category: "test", pinned: false },
+  });
+  const replacing = store.replace({ ...createEmptyWeekUpState(), revision: 9 });
+  releaseLoad();
+  await Promise.all([loading, dispatching, replacing]);
+
+  assert.deepEqual(calls, ["load:start", "load:end", "dispatch:0", "replace:9"]);
+  assert.equal(store.snapshot().revision, 9);
 });

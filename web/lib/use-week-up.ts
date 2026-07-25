@@ -1,7 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { createLearningMoreClient } from "./learning-more-client.ts";
-import { createLearningMoreDelta } from "./learning-more-delta.ts";
 import { buildReviewSummaryFacts, createReviewSummaryClient, type AiServiceStatus } from "./review-summary-client.ts";
 import {
   createEmptyWeekUpState,
@@ -12,23 +10,29 @@ import {
 } from "./week-up-domain.ts";
 import { HttpWeekUpRepository } from "./week-up-repository.ts";
 import { createWeekUpStore } from "./week-up-store.ts";
-import { dueSettlementCommands } from "./settlement-scheduler.ts";
+import { dueDailySettlementCommands, dueSettlementCommands } from "./settlement-scheduler.ts";
 import type { Attribute, PlanItem, WeightEntry } from "./demo-model";
 import { colorForCategory, readableTextColor } from "./category-palette.ts";
 import { participatesInOverdueQueue } from "./overdue-policy.ts";
+import {
+  completedBeforeSchedule,
+  shanghaiDate as dateInShanghai,
+  shanghaiTime as timeInShanghai,
+} from "./execution-policy.ts";
 
 const repository = typeof window === "undefined" ? undefined : new HttpWeekUpRepository();
 const store = repository ? createWeekUpStore(repository) : undefined;
 const storeLoadPromise = store?.load();
 
-function timeInShanghai(instant: string): string {
-  return new Intl.DateTimeFormat("zh-CN", { timeZone: "Asia/Shanghai", hour: "2-digit", minute: "2-digit", hour12: false }).format(new Date(instant));
-}
-
-function dateInShanghai(instant: string): string {
-  const parts = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Shanghai", year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(new Date(instant));
-  const value = Object.fromEntries(parts.map((part) => [part.type, part.value]));
-  return `${value.year}-${value.month}-${value.day}`;
+function millisecondsUntilNextShanghaiDay(now = new Date()): number {
+  const [year, month, day] = dateInShanghai(now.toISOString()).split("-").map(Number);
+  const nextCalendarDay = new Date(Date.UTC(year, month - 1, day + 1));
+  const nextDate = [
+    nextCalendarDay.getUTCFullYear(),
+    String(nextCalendarDay.getUTCMonth() + 1).padStart(2, "0"),
+    String(nextCalendarDay.getUTCDate()).padStart(2, "0"),
+  ].join("-");
+  return Math.max(1_000, Date.parse(`${nextDate}T00:00:00+08:00`) - now.getTime() + 100);
 }
 
 function mondayDate(date = new Date()): string {
@@ -49,12 +53,13 @@ export type WeekUpViewModel = Readonly<{
   attributes: Attribute[];
   catalogAttributes: Attribute[];
   plans: PlanItem[];
+  timelinePlans: PlanItem[];
   weights: WeightEntry[];
 }>;
 
-export function projectWeekUpView(state: WeekUpState): WeekUpViewModel {
+export function projectWeekUpView(state: WeekUpState, at = new Date()): WeekUpViewModel {
   const activeFacts = new Map(state.completionFacts.filter((fact) => fact.revertedAt === undefined).map((fact) => [fact.planId, fact]));
-  const today = dateInShanghai(new Date().toISOString());
+  const today = dateInShanghai(at.toISOString());
   const catalogAttributes: Attribute[] = state.attributes.map((item) => ({
     id: item.id,
     name: item.name,
@@ -69,6 +74,7 @@ export function projectWeekUpView(state: WeekUpState): WeekUpViewModel {
   const activeAttributeIds = new Set(state.attributes.filter((item) => item.archivedAt === undefined).map((item) => item.id));
   const attributes = catalogAttributes.filter((item) => activeAttributeIds.has(item.id));
   const plans: PlanItem[] = state.plans.filter((item) => item.removedAt === undefined).map((item) => {
+    const activeFact = activeFacts.get(item.id);
     const currentProject = item.projectId
       ? state.projects.find((project) => project.id === item.projectId)
       : item.sourceCourseId
@@ -95,7 +101,12 @@ export function projectWeekUpView(state: WeekUpState): WeekUpViewModel {
     category,
     categoryColor,
     categoryTextColor: readableTextColor(categoryColor),
-    completed: activeFacts.has(item.id),
+    completed: activeFact !== undefined,
+    ...(activeFact ? {
+      completedAt: activeFact.completedAt,
+      completedDate: dateInShanghai(activeFact.completedAt),
+      completedEarly: completedBeforeSchedule(activeFact.completedAt, item),
+    } : {}),
     rewards: item.rewards.map((reward) => ({ ...reward })),
     source: item.source,
     syncState: activeFacts.has(item.id) ? "completed" : "scheduled",
@@ -117,8 +128,67 @@ export function projectWeekUpView(state: WeekUpState): WeekUpViewModel {
     ...(item.overdueRescheduledPlanId ? { overdueRescheduled: true } : {}),
   };
   });
+  const activePlans = new Map(state.plans.filter((item) => item.removedAt === undefined).map((item) => [item.id, item]));
+  const timelinePlans: PlanItem[] = state.executionRecords
+    .filter((record) => record.revertedAt === undefined)
+    .flatMap((record): PlanItem[] => {
+      const item = activePlans.get(record.planId);
+      const fact = activeFacts.get(record.planId);
+      if (!item || !fact) return [];
+      const currentProject = item.projectId
+        ? state.projects.find((project) => project.id === item.projectId)
+        : item.sourceCourseId
+          ? state.projects.find((project) => project.sourceCourseId === item.sourceCourseId)
+          : undefined;
+      const category = currentProject?.category ?? item.category;
+      const categoryColor = colorForCategory(category, state.projectCategories.find((entry) => entry.name === category)?.color);
+      return [{
+        id: record.id,
+        calendarSourceId: item.id,
+        ...(item.projectId ? { projectId: item.projectId } : {}),
+        scheduledDate: dateInShanghai(record.startAt),
+        title: item.title,
+        detail: item.detail,
+        start: timeInShanghai(record.startAt),
+        end: timeInShanghai(record.endAt),
+        timeSegments: [{
+          id: record.planSegmentId ?? record.id,
+          start: timeInShanghai(record.startAt),
+          end: timeInShanghai(record.endAt),
+          completed: true,
+        }],
+        timeStatus: "scheduled",
+        category,
+        categoryColor,
+        categoryTextColor: readableTextColor(categoryColor),
+        completed: true,
+        completedAt: fact.completedAt,
+        completedDate: dateInShanghai(fact.completedAt),
+        completedEarly: completedBeforeSchedule(fact.completedAt, item),
+        rewards: item.rewards.map((reward) => ({ ...reward })),
+        source: item.source,
+        executionSource: record.source,
+        syncState: "completed",
+        dayIndex: dayIndexFor(record.startAt),
+        scheduleGroup: "completed",
+        rewardMode: item.rewardMode,
+        templateLabel: item.projectId
+          ? state.projects.find((project) => project.id === item.projectId)?.name
+          : item.sourceCourseId
+            ? state.learningMoreCourses.find((course) => course.courseId === item.sourceCourseId)?.title
+            : undefined,
+        unitLabel: item.unitKind && item.unitQuantity !== undefined
+          ? `${item.unitQuantity} ${item.unitKind === "hour" ? "时" : item.unitKind === "lesson" ? "节" : "次"}`
+          : undefined,
+      }];
+    })
+    .sort((left, right) =>
+      (left.scheduledDate ?? "").localeCompare(right.scheduledDate ?? "")
+      || left.start.localeCompare(right.start)
+      || left.id.localeCompare(right.id)
+    );
   const weights: WeightEntry[] = currentWeightEntries(state).map((item) => ({ date: item.date, label: item.date.slice(5).replace("-", "/"), value: item.value }));
-  return { attributes, catalogAttributes, plans, weights };
+  return { attributes, catalogAttributes, plans, timelinePlans, weights };
 }
 
 export function useWeekUp() {
@@ -129,6 +199,7 @@ export function useWeekUp() {
   const [generatingHarvestIds, setGeneratingHarvestIds] = useState<readonly string[]>([]);
   const [aiStatus, setAiStatus] = useState<AiServiceStatus>();
   const [checkingAi, setCheckingAi] = useState(false);
+  const [projectionDate, setProjectionDate] = useState(() => dateInShanghai(new Date().toISOString()));
   const syncingRef = useRef(false);
   const harvestsInFlightRef = useRef(new Set<string>());
   useEffect(() => {
@@ -136,7 +207,9 @@ export function useWeekUp() {
     const unsubscribe = store.subscribe(setState);
     void storeLoadPromise?.then(async (loaded) => {
       setState(loaded);
-      for (const command of dueSettlementCommands(loaded, new Date().toISOString())) await store.dispatch(command);
+      const now = new Date().toISOString();
+      for (const command of dueDailySettlementCommands(loaded, now)) await store.dispatch(command);
+      for (const command of dueSettlementCommands(store.snapshot(), now)) await store.dispatch(command);
       setReady(true);
     });
     return unsubscribe;
@@ -160,14 +233,33 @@ export function useWeekUp() {
     setSyncing(true);
     try {
       await storeLoadPromise;
-      const current = store.snapshot();
-      const batch = await createLearningMoreClient(current.learningMore.baseUrl).pull(current.learningMore.historyCursor);
-      const delta = createLearningMoreDelta(current, batch);
-      if (delta) await store.dispatch({ type: "learning-more.import", ...delta });
+      const response = await fetch("/api/learning-more/sync", {
+        method: "POST",
+        headers: { accept: "application/json" },
+      });
+      const result = await response.json() as { status?: "changed" | "unchanged" | "failed"; error?: string };
+      if (!response.ok) throw new Error(result.error ?? `learning_more_sync_http_${response.status}`);
+      await store.refresh();
+      setProjectionDate(dateInShanghai(new Date().toISOString()));
+      if (result.status === "failed") {
+        await store.dispatch({ type: "learning-more.failed", message: "learning_more_sync_failed" });
+      }
     } catch (error) {
       await store.dispatch({ type: "learning-more.failed", message: error instanceof Error ? error.message : "learning_more_sync_failed" });
-    } finally { syncingRef.current = false; setSyncing(false); }
+    } finally {
+      setProjectionDate(dateInShanghai(new Date().toISOString()));
+      syncingRef.current = false;
+      setSyncing(false);
+    }
   }, []);
+  useEffect(() => {
+    if (!ready || !store) return;
+    const now = new Date().toISOString();
+    void (async () => {
+      for (const command of dueDailySettlementCommands(store.snapshot(), now)) await store.dispatch(command);
+      for (const command of dueSettlementCommands(store.snapshot(), now)) await store.dispatch(command);
+    })();
+  }, [ready, projectionDate]);
   const refreshAiStatus = useCallback(async (refresh = false) => {
     if (!store) return;
     setCheckingAi(true);
@@ -177,11 +269,38 @@ export function useWeekUp() {
   }, []);
   useEffect(() => {
     if (!ready) return;
-    void syncLearningMore();
-    const timer = window.setInterval(() => void syncLearningMore(), 60_000);
-    const onVisible = () => { if (document.visibilityState === "visible") void syncLearningMore(); };
+    let refreshTimer: number | undefined;
+    let dayBoundaryTimer: number | undefined;
+
+    const stopVisibleTimers = () => {
+      if (refreshTimer !== undefined) window.clearInterval(refreshTimer);
+      if (dayBoundaryTimer !== undefined) window.clearTimeout(dayBoundaryTimer);
+      refreshTimer = undefined;
+      dayBoundaryTimer = undefined;
+    };
+    const scheduleDayBoundary = () => {
+      dayBoundaryTimer = window.setTimeout(() => {
+        if (document.visibilityState !== "visible") return;
+        setProjectionDate(dateInShanghai(new Date().toISOString()));
+        void syncLearningMore();
+        scheduleDayBoundary();
+      }, millisecondsUntilNextShanghaiDay());
+    };
+    const startVisibleTimers = () => {
+      stopVisibleTimers();
+      if (document.visibilityState !== "visible") return;
+      void syncLearningMore();
+      refreshTimer = window.setInterval(() => void syncLearningMore(), 60_000);
+      scheduleDayBoundary();
+    };
+    const onVisible = () => startVisibleTimers();
+
     document.addEventListener("visibilitychange", onVisible);
-    return () => { window.clearInterval(timer); document.removeEventListener("visibilitychange", onVisible); };
+    startVisibleTimers();
+    return () => {
+      stopVisibleTimers();
+      document.removeEventListener("visibilitychange", onVisible);
+    };
   }, [ready, syncLearningMore]);
   useEffect(() => {
     if (!ready) return;
@@ -205,5 +324,6 @@ export function useWeekUp() {
         setGeneratingHarvestIds((current) => current.filter((id) => id !== pending.id));
       });
   }, [ready, state.aiReview, state.settlements, refreshAiStatus]);
-  return { state, view: useMemo(() => projectWeekUpView(state), [state]), ready, persistenceStatus, syncing, generatingHarvestIds, aiStatus, checkingAi, dispatch, replace, syncLearningMore, refreshAiStatus };
+  const projectionNow = useMemo(() => new Date(`${projectionDate}T12:00:00+08:00`), [projectionDate]);
+  return { state, view: useMemo(() => projectWeekUpView(state, projectionNow), [state, projectionNow]), ready, persistenceStatus, syncing, generatingHarvestIds, aiStatus, checkingAi, dispatch, replace, syncLearningMore, refreshAiStatus };
 }

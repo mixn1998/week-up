@@ -193,7 +193,7 @@ test("opens the month calendar directly from the month dashboard", async () => {
   assert.match(monthDashboard, /打开月日历/);
   assert.doesNotMatch(monthDashboard, /＋ 月方向/);
   assert.match(page, /onOpenCalendar=\{\(\) => openCalendar\("month"\)\}/);
-  assert.match(page, /<CalendarView plans=\{plans\} initialMode=\{calendarInitialMode\}/);
+  assert.match(page, /<CalendarView plans=\{calendarContent === "timeline" \? weekUp\.view\.timelinePlans : plans\} initialMode=\{calendarInitialMode\} content=\{calendarContent\}/);
 });
 
 test("keeps unscheduled plans outside time slots and uses one clickable time ticket", async () => {

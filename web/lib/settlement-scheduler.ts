@@ -47,3 +47,16 @@ export function dueSettlementCommands(state: WeekUpState, now: string): WeekUpCo
   }
   return [...due.entries()].sort(([left], [right]) => left.localeCompare(right)).map(([, command]) => command);
 }
+
+export function dueDailySettlementCommands(state: WeekUpState, now: string): WeekUpCommand[] {
+  const today = shanghaiDate(now);
+  const existing = new Set(state.dailySettlements.map((item) => item.localDate));
+  return [...new Set(
+    state.plans
+      .filter((plan) => plan.removedAt === undefined)
+      .map((plan) => shanghaiDate(plan.startAt))
+      .filter((date) => date < today && !existing.has(date)),
+  )]
+    .sort()
+    .map((localDate): WeekUpCommand => ({ type: "daily-settlement.generate", localDate }));
+}

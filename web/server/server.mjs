@@ -82,6 +82,10 @@ const server = createServer(async (request, response) => {
       return;
     }
     if (url.pathname === "/api/state" && request.method === "GET") { json(response, 200, { state: store.load() }); return; }
+    if (url.pathname === "/api/learning-more/sync" && request.method === "POST") {
+      json(response, 200, await learningMoreSync.runSafely());
+      return;
+    }
     if (url.pathname === "/api/plans" && request.method === "GET") {
       const from = url.searchParams.get("from") ?? "0000-01-01";
       const to = url.searchParams.get("to") ?? "9999-12-31";
@@ -137,7 +141,6 @@ server.listen(PORT, HOST, async () => {
   console.log(`Week UP is ready at http://${HOST}:${PORT}/`);
   console.log(`SQLite: ${store.path}`);
   if (store.migrationBackupPath) console.log(`Pre-migration backup: ${store.migrationBackupPath}`);
-  learningMoreSync.start();
   try { await maintainBackups(store, join(localDataRoot, "backups")); }
   catch (error) { console.error("Backup failed:", error); }
 });
@@ -147,7 +150,6 @@ backupTimer.unref();
 
 function shutdown() {
   clearInterval(backupTimer);
-  learningMoreSync.stop();
   server.close(() => { store.close(); process.exit(0); });
 }
 process.on("SIGINT", shutdown);

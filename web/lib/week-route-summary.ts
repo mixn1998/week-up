@@ -13,9 +13,10 @@ export type WeekRouteDaySummary = {
 
 export function summarizeWeekRouteDay(
   plans: readonly WeekRoutePlanStatus[],
+  frozen?: Readonly<{ planIds: readonly string[]; completedPlanIds: readonly string[] }>,
 ): WeekRouteDaySummary {
-  const total = plans.length;
-  const completed = plans.filter((plan) => plan.completed).length;
+  const total = frozen?.planIds.length ?? plans.length;
+  const completed = frozen?.completedPlanIds.length ?? plans.filter((plan) => plan.completed).length;
 
   return {
     completed,

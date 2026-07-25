@@ -23,6 +23,7 @@ import { summarizeWeekRouteDay } from "../lib/week-route-summary";
 import { expandRecurrenceDates, recurrenceSummary, type RecurrenceRule } from "../lib/recurrence";
 import { useWeekUp } from "../lib/use-week-up";
 import { AiStatusControl } from "./ai-status-control";
+import { ExecutionCompletionModal } from "./execution-completion-modal";
 import { MilestoneRunner } from "./milestone-runner";
 import { exportWeekUpBackup, importWeekUpBackup, type AttributeCategoryRecord, type AttributeRecord, type CompletionFact, type GoalRecord, type LearningMoreCourse, type LearningMoreLesson, type PlanRecord, type PlanTimeSegment, type PlanTimeSegmentInput, type ProjectRecord, type RewardUnit, type SettlementRecord, type SkillbookRecord, type WeekUpState } from "../lib/week-up-domain";
 
@@ -191,7 +192,7 @@ function PlanRow({ plan, attributes, onComplete, onEdit, onUndo, onRemove, onRes
       </div>)}</div> : onEdit && !plan.overdue ? <button type="button" className={`plan-time plan-time--button${plan.timeStatus === "unscheduled" ? " plan-time--unscheduled" : ""}`} onClick={() => onEdit(plan.id)} aria-label={plan.timeStatus === "unscheduled" ? `为${plan.title}配置时间` : `修改${plan.title}的时间`}><strong>{timeLabel}</strong></button> : <div className={`plan-time${plan.timeStatus === "unscheduled" ? " plan-time--unscheduled" : ""}`}><strong>{timeLabel}</strong></div>}
       <div className="timeline-mark"><i /></div>
       <div className="plan-main">
-        <div className="plan-meta"><span className="category-chip">{plan.category}</span>{plan.source === "learning-more" && <span className="source-tag">▥ Learning MORE · 已同步</span>}{plan.overdue && <span className="overdue-chip">已逾期</span>}{plan.overdueCarried && <span className="overdue-chip overdue-chip--carried">逾期</span>}{plan.templateLabel && <span className={`template-chip template-chip--${plan.rewardMode}`}>{plan.rewardMode === "custom" ? "本次已自定义" : plan.rewardMode === "template" ? `跟随 ${plan.templateLabel}` : `${plan.templateLabel} · 等待配置`}</span>}{plan.unitLabel && <span className="unit-chip">{plan.unitLabel}</span>}{segmented && <span className="segment-progress-chip">分段 {completedSegments}/{segments.length}</span>}{plan.recurrenceSummary && <span className={`recurrence-chip${plan.recurrenceDetached ? " is-detached" : ""}`}>{plan.recurrenceDetached ? "单次调整" : `↻ ${plan.recurrenceSummary}`}</span>}</div>
+        <div className="plan-meta"><span className="category-chip">{plan.category}</span>{plan.source === "learning-more" && <span className="source-tag">▥ Learning MORE · 已同步</span>}{plan.completedEarly && plan.completedDate && <span className="early-complete-chip">已于 {plan.completedDate.slice(5).replace("-", "/")} 提前完成</span>}{plan.overdue && <span className="overdue-chip">已逾期</span>}{plan.overdueCarried && <span className="overdue-chip overdue-chip--carried">逾期</span>}{plan.templateLabel && <span className={`template-chip template-chip--${plan.rewardMode}`}>{plan.rewardMode === "custom" ? "本次已自定义" : plan.rewardMode === "template" ? `跟随 ${plan.templateLabel}` : `${plan.templateLabel} · 等待配置`}</span>}{plan.unitLabel && <span className="unit-chip">{plan.unitLabel}</span>}{segmented && <span className="segment-progress-chip">分段 {completedSegments}/{segments.length}</span>}{plan.recurrenceSummary && <span className={`recurrence-chip${plan.recurrenceDetached ? " is-detached" : ""}`}>{plan.recurrenceDetached ? "单次调整" : `↻ ${plan.recurrenceSummary}`}</span>}</div>
         <h3>{plan.title}</h3>
         <p>{plan.detail}</p>
         <RewardChips rewards={plan.rewards} attributes={attributes} />
@@ -568,7 +569,7 @@ function PeriodFacts({ period, plans, attributes, settlement, generatingHarvestI
   </section>;
 }
 
-function WeekDashboard({ attributes, plans, planRecords, goals, settlements, initialRange, generatingHarvestIds, onRetryHarvest, onNewGoal, onEditGoal, onQuickAdd, onOpenCalendar, onOpenGrowth, onComplete, onEditPlan, onUndoPlan, onRemovePlan, onRescheduleOverdue }: { attributes: Attribute[]; plans: PlanItem[]; planRecords: readonly PlanRecord[]; goals: readonly GoalRecord[]; settlements: readonly SettlementRecord[]; initialRange?: DateRange; generatingHarvestIds: readonly string[]; onRetryHarvest: (id: string) => void; onNewGoal: () => void; onEditGoal: (goal: GoalRecord) => void; onQuickAdd: (goalIds?: readonly string[]) => void; onOpenCalendar: () => void; onOpenGrowth: () => void; onComplete: (id: string, segmentId?: string) => void; onEditPlan: (id: string) => void; onUndoPlan: (id: string, segmentId?: string) => void; onRemovePlan: (id: string) => void; onRescheduleOverdue: (id: string) => void }) {
+function WeekDashboard({ attributes, plans, planRecords, goals, dailySettlements, settlements, initialRange, generatingHarvestIds, onRetryHarvest, onNewGoal, onEditGoal, onQuickAdd, onOpenCalendar, onOpenGrowth, onComplete, onEditPlan, onUndoPlan, onRemovePlan, onRescheduleOverdue }: { attributes: Attribute[]; plans: PlanItem[]; planRecords: readonly PlanRecord[]; goals: readonly GoalRecord[]; dailySettlements: WeekUpState["dailySettlements"]; settlements: readonly SettlementRecord[]; initialRange?: DateRange; generatingHarvestIds: readonly string[]; onRetryHarvest: (id: string) => void; onNewGoal: () => void; onEditGoal: (goal: GoalRecord) => void; onQuickAdd: (goalIds?: readonly string[]) => void; onOpenCalendar: () => void; onOpenGrowth: () => void; onComplete: (id: string, segmentId?: string) => void; onEditPlan: (id: string) => void; onUndoPlan: (id: string, segmentId?: string) => void; onRemovePlan: (id: string) => void; onRescheduleOverdue: (id: string) => void }) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [rangeOverride, setRangeOverride] = useState<DateRange | undefined>(initialRange);
   const [actionsOpen, setActionsOpen] = useState(false);
@@ -635,7 +636,7 @@ function WeekDashboard({ attributes, plans, planRecords, goals, settlements, ini
     <div className="page-title period-page-title"><div><span className="eyebrow">WEEK CAMP</span><h1>本周行动营地</h1><p>{range.startDate} — {range.endDate}</p></div><div className="page-title__actions"><button className="pixel-button pixel-button--cyan" onClick={onOpenCalendar}>打开周日历</button></div></div>
     <PeriodPicker label="周" settlements={periodSettlements} selectedId={selectedId} onSelect={setSelectedId} />
     <section className="week-hero pixel-card"><div><span className="week-hero__sprite">▥</span><div><span className="eyebrow">SEVEN DAY ROUTE</span><h2>{selectedSettlement ? "这一周已经装进成长档案" : "今天走一小格，这周就会很不一样"}</h2><p>{completedActionCount} / {countedPlans.length} 项行动完成 · {gains.reduce((sum, item) => sum + item.amount, 0)} XP 已收集</p></div></div><button className="week-hero__growth" onClick={onOpenGrowth}><b>{gains.length}</b><span>项属性成长</span></button></section>
-    <section className="week-route" aria-label="七日行动地图">{days.map((date, index) => { const dayPlans = periodPlans.filter((plan) => planDate(plan, recordMap, range) === date); const summary = summarizeWeekRouteDay(dayPlans); return <button className={`day-tile${summary.lit ? " is-lit" : ""}${date === currentLocalDate() ? " is-today" : ""}`} key={date} onClick={onOpenCalendar}><span>{["一", "二", "三", "四", "五", "六", "日"][index]}</span><b>{date.slice(8)}</b><i style={{ width: `${summary.progress}%` }} /><small>{summary.label}</small></button>; })}</section>
+    <section className="week-route" aria-label="七日行动地图">{days.map((date, index) => { const dayPlans = periodPlans.filter((plan) => planDate(plan, recordMap, range) === date); const frozen = dailySettlements.find((item) => item.localDate === date); const summary = summarizeWeekRouteDay(dayPlans, frozen); return <button className={`day-tile${summary.lit ? " is-lit" : ""}${date === currentLocalDate() ? " is-today" : ""}`} key={date} onClick={onOpenCalendar}><span>{["一", "二", "三", "四", "五", "六", "日"][index]}</span><b>{date.slice(8)}</b><i style={{ width: `${summary.progress}%` }} /><small>{summary.label}</small></button>; })}</section>
     <div className="week-dashboard-grid">
       <section className="pixel-card dashboard-panel goal-direction-panel"><div className="section-heading"><div><span className="eyebrow">WEEK QUEST</span><h2>本周目标</h2></div>{!selectedSettlement && <div className="section-heading__actions"><button className="pixel-button pixel-button--pink" onClick={() => onQuickAdd(activeWeekGoalLinkIds)}>＋ 安排行动</button><button className="pixel-button pixel-button--cyan" onClick={onNewGoal}>＋ 新目标</button></div>}</div>{weekGoals.length === 0 ? <div className="mini-empty">这周还没有目标。目标可以宽泛，具体成长仍由完成的计划产生。</div> : <div className="dashboard-goal-list" role="tablist" aria-label="切换本周目标">{weekGoals.map((goal) => { const linked = periodPlans.filter((plan) => recordMap.get(plan.id)?.goalIds.includes(goal.id)); const done = linked.filter((plan) => plan.completed).length; const active = goal.id === activeWeekGoal?.id; return <article className={`dashboard-goal-card${active ? " is-active" : ""}`} key={goal.id}><button className="dashboard-goal-select" type="button" role="tab" aria-selected={active} aria-controls="week-goal-links" onClick={() => setSelectedWeekGoalId(goal.id)}><span>◆</span><div><b>{goal.title}</b><p>{goal.note || "给这一周一个想推进的目标"}</p><small>{linked.length ? `${done}/${linked.length} 个关联行动完成` : "尚未关联具体行动"}</small></div></button>{!selectedSettlement && <button className="dashboard-goal-edit" type="button" onClick={() => onEditGoal(goal)}>编辑 →</button>}</article>; })}</div>}</section>
       <section className="pixel-card dashboard-panel goal-action-panel" id="week-goal-links" role="tabpanel" aria-label={activeWeekGoal ? `${activeWeekGoal.title}的关联行动` : "目标关联"}><div className="section-heading section-heading--small"><div><span className="eyebrow">GOAL LINKS</span><h2>目标关联</h2></div><span>{activeWeekGoal ? `${activeWeekGoalDone}/${activeWeekGoalPlans.length}` : "0 项"}</span></div>{weekGoals.length === 0 ? <div className="mini-empty">创建本周目标后，可以在这里查看它关联的具体行动。</div> : activeWeekGoalPlans.length === 0 ? <div className="mini-empty">“{activeWeekGoal?.title}”尚未关联具体行动。</div> : <div className="goal-action-list">{activeWeekGoalPlans.map((plan) => <button type="button" key={plan.id} className={plan.completed ? "is-complete" : ""} onClick={() => !selectedSettlement && onEditPlan(plan.id)}><span>{plan.completed ? "✓" : "○"}</span><div><b>{plan.title}</b><small>{plan.timeStatus === "unscheduled" ? "时间待配置" : `${plan.start}—${plan.end}`} · {plan.category}</small></div><em>{plan.completed ? "已完成" : selectedSettlement ? "未完成" : "查看 →"}</em></button>)}</div>}</section>
@@ -696,7 +697,7 @@ function MonthDashboard({ attributes, plans, planRecords, goals, projects, proje
 function CalendarDrawerPlan({ plan, mode, onEditPlan }: { plan: PlanItem; mode: "week" | "month"; onEditPlan: (id: string) => void }) {
   const unscheduled = mode === "week" && plan.timeStatus === "unscheduled";
   return <div className={`drawer-plan${unscheduled ? " drawer-plan--unscheduled" : ""}`}>
-    <button className={`drawer-plan__time${unscheduled ? " is-unscheduled" : ""}`} onClick={() => onEditPlan(plan.id)}>{mode === "month" ? "✓ 已完成" : unscheduled ? "时间待配置" : (plan.timeSegments?.length ?? 0) > 1 ? `${plan.timeSegments!.length} 个时段` : `${plan.start}—${plan.end}`}</button>
+    <button className={`drawer-plan__time${unscheduled ? " is-unscheduled" : ""}`} onClick={() => onEditPlan(plan.calendarSourceId ?? plan.id)}>{mode === "month" ? "✓ 已完成" : unscheduled ? "时间待配置" : (plan.timeSegments?.length ?? 0) > 1 ? `${plan.timeSegments!.length} 个时段` : `${plan.start}—${plan.end}`}</button>
     <div className="drawer-plan__copy"><b>{plan.title}</b><span>{plan.category}{plan.source === "learning-more" ? " · Learning MORE" : ""}</span></div>
   </div>;
 }
@@ -707,7 +708,7 @@ function expandCalendarSegments(plans: readonly PlanItem[]): PlanItem[] {
     : [plan]);
 }
 
-function CalendarView({ plans, initialMode, onEditPlan }: { plans: PlanItem[]; initialMode: "week" | "month"; onEditPlan: (id: string) => void }) {
+function CalendarView({ plans, initialMode, content, onEditPlan }: { plans: PlanItem[]; initialMode: "week" | "month"; content: "timeline" | "schedule"; onEditPlan: (id: string) => void }) {
   const todayKey = currentLocalDate();
   const weekRange = currentWeekRange();
   const todayIndex = Math.max(0, Math.min(6, Math.round((Date.parse(`${todayKey}T00:00:00Z`) - Date.parse(`${weekRange.startDate}T00:00:00Z`)) / 86_400_000)));
@@ -722,7 +723,7 @@ function CalendarView({ plans, initialMode, onEditPlan }: { plans: PlanItem[]; i
   const [monthAnchor, setMonthAnchor] = useState(todayKey.slice(0, 7));
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
   const [expandedDays, setExpandedDays] = useState<number[]>([]);
-  const planDateKey = (plan: PlanItem) => shiftLocalDate(weekRange.startDate, plan.dayIndex ?? 0);
+  const planDateKey = (plan: PlanItem) => plan.scheduledDate ?? shiftLocalDate(weekRange.startDate, plan.dayIndex ?? 0);
   const plansForDate = (dateKey: string) => plans
     .filter((plan) => planDateKey(plan) === dateKey)
     .sort((left, right) => left.start.localeCompare(right.start));
@@ -747,10 +748,10 @@ function CalendarView({ plans, initialMode, onEditPlan }: { plans: PlanItem[]; i
   const selectedDateLabel = selectedDate ? `${Number(selectedDate.slice(5, 7))}月${Number(selectedDate.slice(8, 10))}日` : "";
   return (
     <div className="view">
-      <div className="page-title"><div><span className="eyebrow">TIMELINE</span><h1>时间轨迹</h1><p>{mode === "week" ? rangeLabel : monthLabel} · Asia/Shanghai</p></div><div className="segmented"><button className={mode === "week" ? "active" : ""} onClick={() => { setMode("week"); setSelectedDate(null); }}>周</button><button className={mode === "month" ? "active" : ""} onClick={() => { setMode("month"); setSelectedDate(null); }}>月</button></div></div>
+      <div className="page-title"><div><span className="eyebrow">{content === "timeline" ? "TIMELINE" : "CALENDAR"}</span><h1>{content === "timeline" ? "时间轨迹" : "日程表"}</h1><p>{mode === "week" ? rangeLabel : monthLabel} · Asia/Shanghai</p></div><div className="segmented"><button className={mode === "week" ? "active" : ""} onClick={() => { setMode("week"); setSelectedDate(null); }}>周</button><button className={mode === "month" ? "active" : ""} onClick={() => { setMode("month"); setSelectedDate(null); }}>月</button></div></div>
       {mode === "week" ? <section className="calendar-card pixel-card">
         <div className="calendar-head"><span>时间</span>{dayDates.map((date, index) => <div className={index === todayIndex ? "today" : ""} key={date.key}>{date.weekday}<b>{date.day}</b></div>)}</div>
-        <div className="unscheduled-dock"><div className="unscheduled-dock__label"><span>POCKET</span><b>待安排</b></div>{dayDates.map((date, dayIndex) => { const count = plansForDate(date.key).filter((plan) => plan.timeStatus === "unscheduled").length; return <button className={`${dayIndex === todayIndex ? "is-today" : ""}${count > 0 ? " has-items" : ""}`} key={date.key} disabled={count === 0} onClick={() => setSelectedDate(date.key)} aria-label={`${date.weekday}有${count}项待安排计划`}>{count > 0 ? <><strong>+{count}</strong><small>展开待安排</small></> : <span>—</span>}</button>; })}</div>
+        {content === "schedule" && <div className="unscheduled-dock"><div className="unscheduled-dock__label"><span>POCKET</span><b>待安排</b></div>{dayDates.map((date, dayIndex) => { const count = plansForDate(date.key).filter((plan) => plan.timeStatus === "unscheduled").length; return <button className={`${dayIndex === todayIndex ? "is-today" : ""}${count > 0 ? " has-items" : ""}`} key={date.key} disabled={count === 0} onClick={() => setSelectedDate(date.key)} aria-label={`${date.weekday}有${count}项待安排计划`}>{count > 0 ? <><strong>+{count}</strong><small>展开待安排</small></> : <span>—</span>}</button>; })}</div>}
         <div className="calendar-body"><div className="time-axis">{["06:00", "08:00", "10:00", "12:00", "14:00", "16:00", "18:00", "20:00", "22:00"].map((time) => <span key={time}>{time}</span>)}</div>{dayDates.map((date, dayIndex) => {
           const allDayPlans = plansForDate(date.key);
           const timedPlans = expandCalendarSegments(allDayPlans.filter((plan) => plan.timeStatus !== "unscheduled"));
@@ -763,7 +764,7 @@ function CalendarView({ plans, initialMode, onEditPlan }: { plans: PlanItem[]; i
             return <button className={`calendar-event${clustered ? " calendar-event--cluster" : ""}`} style={{ top: `${position.topPercent}%`, height: `${position.heightPercent}%`, "--category-color": firstPlan.categoryColor, "--category-text": firstPlan.categoryTextColor } as CSSProperties} key={cluster.id} onClick={() => setSelectedDate(date.key)} aria-label={clustered ? `${firstPlan.start} 有 ${cluster.plans.length} 项重叠日程，查看当天全部计划` : `查看 ${firstPlan.title}`}><b>{firstPlan.start}{clustered ? ` · ${cluster.plans.length} 项` : ""}</b><span>{firstPlan.title}</span>{clustered ? <small>堆叠日程 +{cluster.plans.length - 1} · 查看全部</small> : firstPlan.source === "learning-more" && <small>▥ 已同步</small>}</button>;
           })}</div>;
         })}</div>
-        {plans.length === 0 && <div className="calendar-empty">本周没有已安排的计划</div>}
+        {plans.length === 0 && <div className="calendar-empty">{content === "timeline" ? "本周还没有实际完成记录" : "本周没有已安排的计划"}</div>}
         <div className="mobile-agenda">{dayDates.map((date, dayIndex) => {
           const dayPlans = plansForDate(date.key);
           const unscheduledPlans = dayPlans.filter((plan) => plan.timeStatus === "unscheduled");
@@ -1239,6 +1240,7 @@ function CompletionCelebration({ feedback, attributes, onClose }: { feedback: Co
 export default function Home() {
   const [tab, setTab] = useState<TabId>("today");
   const [calendarInitialMode, setCalendarInitialMode] = useState<"week" | "month">("week");
+  const [calendarContent, setCalendarContent] = useState<"timeline" | "schedule">("timeline");
   const [selectedWeekRange, setSelectedWeekRange] = useState<DateRange>();
   const [plans, setPlans] = useState(INITIAL_PLANS);
   const [attributes, setAttributes] = useState(INITIAL_ATTRIBUTES);
@@ -1251,6 +1253,7 @@ export default function Home() {
   const [goalEditor, setGoalEditor] = useState<{ initial?: GoalRecord; period: GoalRecord["period"] } | null>(null);
   const [projectEditor, setProjectEditor] = useState<"new" | ProjectRecord | null>(null);
   const [planEditor, setPlanEditor] = useState<PlanRecord | null>(null);
+  const [executionEditor, setExecutionEditor] = useState<{ plan: PlanRecord; segmentId?: string } | null>(null);
   const [overdueEditor, setOverdueEditor] = useState<PlanRecord | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const completionTimerRef = useRef<number | null>(null);
@@ -1259,10 +1262,14 @@ export default function Home() {
   const activeNav = PAGE_META[tab];
   const openCalendar = (mode: "week" | "month") => {
     setCalendarInitialMode(mode);
+    setCalendarContent("schedule");
     setTab("calendar");
   };
   const navigateToTab = (nextTab: Exclude<TabId, "weight">) => {
-    if (nextTab === "calendar") setCalendarInitialMode("week");
+    if (nextTab === "calendar") {
+      setCalendarInitialMode("week");
+      setCalendarContent("timeline");
+    }
     if (nextTab === "week") setSelectedWeekRange(undefined);
     setTab(nextTab);
   };
@@ -1308,11 +1315,24 @@ export default function Home() {
   const completePlan = (id: string, segmentId?: string) => {
     const plan = plans.find((item) => item.id === id);
     if (!plan || plan.completed) return;
-    void weekUp.dispatch(segmentId ? { type: "plan.segment.complete", id, segmentId } : { type: "plan.complete", id }).then((next) => {
-      const savedPlan = next.plans.find((item) => item.id === id);
-      const completed = next.completionFacts.some((fact) => fact.planId === id && fact.revertedAt === undefined);
+    const record = weekUp.state.plans.find((item) => item.id === id && item.removedAt === undefined);
+    if (!record || record.source === "learning-more") return;
+    setExecutionEditor({ plan: record, ...(segmentId ? { segmentId } : {}) });
+  };
+
+  const confirmPlanCompletion = (value: { actualSegments: readonly PlanTimeSegmentInput[]; completedAt: string }) => {
+    if (!executionEditor) return;
+    const { plan: record, segmentId } = executionEditor;
+    const plan = plans.find((item) => item.id === record.id);
+    setExecutionEditor(null);
+    void weekUp.dispatch(segmentId
+      ? { type: "plan.segment.complete", id: record.id, segmentId, actualSegment: value.actualSegments[0]!, completedAt: value.completedAt }
+      : { type: "plan.complete", id: record.id, actualSegments: value.actualSegments, completedAt: value.completedAt }
+    ).then((next) => {
+      const savedPlan = next.plans.find((item) => item.id === record.id);
+      const completed = next.completionFacts.some((fact) => fact.planId === record.id && fact.revertedAt === undefined);
       if (!completed) return;
-      showCompletionFeedback({ kind: "single", title: savedPlan?.title ?? plan.title, rewards: [...(savedPlan?.rewards ?? plan.rewards)], source: "week-up" });
+      showCompletionFeedback({ kind: "single", title: savedPlan?.title ?? plan?.title ?? record.title, rewards: [...(savedPlan?.rewards ?? plan?.rewards ?? record.rewards)], source: "week-up" });
     });
   };
 
@@ -1371,9 +1391,9 @@ export default function Home() {
         <div className="page-wrap">
           {weekUp.persistenceStatus === "offline" && <section className="persistence-alert" role="alert"><b>本地服务暂时离线</b><span>当前展示的是最近缓存，修改操作不会生效。请重新启动 Week UP 服务后刷新页面。</span></section>}
           {tab === "today" && <TodayView plans={plans} attributes={attributes} completionFacts={weekUp.state.completionFacts} weights={weights} onComplete={completePlan} onExternalComplete={completeLearningPlan} onQuickAdd={() => openQuickAdd()} onOpenWeight={() => setTab("weight")} onEdit={(id) => setPlanEditor(weekUp.state.plans.find((plan) => plan.id === id) ?? null)} onUndo={undoPlan} onRemove={(id) => void weekUp.dispatch({ type: "plan.remove", id })} onRescheduleOverdue={(id) => setOverdueEditor(weekUp.state.plans.find((plan) => plan.id === id) ?? null)} />}
-          {tab === "week" && <WeekDashboard attributes={attributes} plans={plans} planRecords={weekUp.state.plans.filter((plan) => plan.removedAt === undefined)} goals={weekUp.state.goals} settlements={weekUp.state.settlements} initialRange={selectedWeekRange} generatingHarvestIds={weekUp.generatingHarvestIds} onRetryHarvest={(id) => void weekUp.dispatch({ type: "settlement.harvest.retry", id })} onNewGoal={() => setGoalEditor({ period: "week" })} onEditGoal={(goal) => setGoalEditor({ period: "week", initial: goal })} onQuickAdd={(goalIds) => openQuickAdd(undefined, goalIds)} onOpenCalendar={() => openCalendar("week")} onOpenGrowth={() => setTab("growth")} onComplete={completePlan} onEditPlan={(id) => setPlanEditor(weekUp.state.plans.find((plan) => plan.id === id) ?? null)} onUndoPlan={undoPlan} onRemovePlan={(id) => void weekUp.dispatch({ type: "plan.remove", id })} onRescheduleOverdue={(id) => setOverdueEditor(weekUp.state.plans.find((plan) => plan.id === id) ?? null)} />}
+          {tab === "week" && <WeekDashboard attributes={attributes} plans={plans} planRecords={weekUp.state.plans.filter((plan) => plan.removedAt === undefined)} goals={weekUp.state.goals} dailySettlements={weekUp.state.dailySettlements} settlements={weekUp.state.settlements} initialRange={selectedWeekRange} generatingHarvestIds={weekUp.generatingHarvestIds} onRetryHarvest={(id) => void weekUp.dispatch({ type: "settlement.harvest.retry", id })} onNewGoal={() => setGoalEditor({ period: "week" })} onEditGoal={(goal) => setGoalEditor({ period: "week", initial: goal })} onQuickAdd={(goalIds) => openQuickAdd(undefined, goalIds)} onOpenCalendar={() => openCalendar("week")} onOpenGrowth={() => setTab("growth")} onComplete={completePlan} onEditPlan={(id) => setPlanEditor(weekUp.state.plans.find((plan) => plan.id === id) ?? null)} onUndoPlan={undoPlan} onRemovePlan={(id) => void weekUp.dispatch({ type: "plan.remove", id })} onRescheduleOverdue={(id) => setOverdueEditor(weekUp.state.plans.find((plan) => plan.id === id) ?? null)} />}
           {tab === "month" && <MonthDashboard attributes={attributes} plans={plans} planRecords={weekUp.state.plans.filter((plan) => plan.removedAt === undefined)} goals={weekUp.state.goals} projects={weekUp.state.projects} projectCategories={weekUp.state.projectCategories} settlements={weekUp.state.settlements} weights={weights} generatingHarvestIds={weekUp.generatingHarvestIds} onRetryHarvest={(id) => void weekUp.dispatch({ type: "settlement.harvest.retry", id })} onNewGoal={() => setGoalEditor({ period: "month" })} onEditGoal={(goal) => setGoalEditor({ period: "month", initial: goal })} onOpenWeek={(weekRange) => { setSelectedWeekRange(weekRange); setTab("week"); }} onOpenCalendar={() => openCalendar("month")} onOpenWeight={() => setTab("weight")} />}
-          {tab === "calendar" && <CalendarView plans={plans} initialMode={calendarInitialMode} onEditPlan={(id) => setPlanEditor(weekUp.state.plans.find((plan) => plan.id === id) ?? null)} />}
+          {tab === "calendar" && <CalendarView plans={calendarContent === "timeline" ? weekUp.view.timelinePlans : plans} initialMode={calendarInitialMode} content={calendarContent} onEditPlan={(id) => setPlanEditor(weekUp.state.plans.find((plan) => plan.id === id) ?? null)} />}
           {tab === "action-config" && <ActionConfigView attributes={attributes} attributeCategories={weekUp.state.attributeCategories} projectCategories={weekUp.state.projectCategories} projects={weekUp.state.projects.filter((project) => project.source === "week-up" && project.archivedAt === undefined)} courses={weekUp.state.learningMoreCourses} courseProjects={weekUp.state.projects.filter((project) => project.source === "learning-more" && project.archivedAt === undefined)} onNewAttribute={() => setAttributeEditor("new")} onEditAttribute={(attribute) => setAttributeEditor(weekUp.state.attributes.find((item) => item.id === attribute.id) ?? null)} onNewProject={() => setProjectEditor("new")} onEditProject={setProjectEditor} onConfigureCourse={setProjectEditor} onCreateCategory={(name) => { void weekUp.dispatch({ type: "attribute-category.create", name }); }} onRenameCategory={(id, name) => { void weekUp.dispatch({ type: "attribute-category.rename", id, name }); }} onDeleteCategory={(id) => { void weekUp.dispatch({ type: "attribute-category.delete", id }); }} onCreateProjectCategory={(name, color) => { void weekUp.dispatch({ type: "project-category.create", name, color }); }} onRenameProjectCategory={(id, name, color) => { void weekUp.dispatch({ type: "project-category.rename", id, name, color }); }} onDeleteProjectCategory={(id) => { void weekUp.dispatch({ type: "project-category.delete", id }); }} />}
           {tab === "growth" && <GrowthView attributes={weekUp.view.catalogAttributes} skillbooks={weekUp.state.skillbooks} goals={weekUp.state.goals} />}
           {tab === "weight" && <WeightView entries={weights} target={weekUp.state.preferences.targetWeightKg} onAdd={addWeight} onTarget={(valueKg) => void weekUp.dispatch({ type: "weight.target", valueKg })} />}
@@ -1385,6 +1405,7 @@ export default function Home() {
       {goalEditor && <GoalModal initial={goalEditor.initial} defaultPeriod={goalEditor.period} goals={weekUp.state.goals.filter((goal) => goal.archivedAt === undefined)} onClose={() => setGoalEditor(null)} onSave={(value) => { if (goalEditor.initial) void weekUp.dispatch({ type: "goal.update", id: goalEditor.initial.id, patch: value }); else void weekUp.dispatch({ type: "goal.create", value }); setGoalEditor(null); }} {...(goalEditor.initial ? { onArchive: () => { void weekUp.dispatch({ type: "goal.archive", id: goalEditor.initial!.id }); setGoalEditor(null); }, onRemove: () => { void weekUp.dispatch({ type: "goal.remove", id: goalEditor.initial!.id }); setGoalEditor(null); } } : {})} />}
       {projectEditor && <ProjectModal initial={projectEditor === "new" ? undefined : projectEditor} attributes={weekUp.state.attributes.filter((attribute) => attribute.archivedAt === undefined)} projectCategories={weekUp.state.projectCategories} onClose={() => setProjectEditor(null)} onSave={(value) => { if (projectEditor === "new") void weekUp.dispatch({ type: "project.create", value }); else void weekUp.dispatch({ type: "project.update", id: projectEditor.id, patch: value }); setProjectEditor(null); }} {...(projectEditor !== "new" && projectEditor.source === "week-up" ? { onRemove: () => { void weekUp.dispatch({ type: "project.remove", id: projectEditor.id }); setProjectEditor(null); } } : {})} />}
       {planEditor && <PlanModal initial={planEditor} attributes={weekUp.state.attributes.filter((attribute) => attribute.archivedAt === undefined)} goals={weekUp.state.goals.filter((goal) => goal.archivedAt === undefined)} onClose={() => setPlanEditor(null)} onSave={(value) => { void weekUp.dispatch({ type: "plan.update", id: planEditor.id, patch: value }); setPlanEditor(null); }} onFollowTemplate={() => { void weekUp.dispatch({ type: "plan.follow-template", id: planEditor.id }); setPlanEditor(null); }} {...(planEditor.recurrenceGroupId ? { onUpdateRecurrence: (value: PlanEditorValue & { unitQuantity?: number }) => { void weekUp.dispatch({ type: "plan.recurrence.update", id: planEditor.id, patch: value }); setPlanEditor(null); }, onCancelRecurrence: () => { void weekUp.dispatch({ type: "plan.recurrence.cancel", id: planEditor.id }); setPlanEditor(null); } } : {})} {...(planEditor.source === "week-up" || planEditor.sourceRef?.startsWith("week-up:") ? { onRemove: () => { void weekUp.dispatch({ type: "plan.remove", id: planEditor.id }); setPlanEditor(null); } } : {})} />}
+      {executionEditor && <ExecutionCompletionModal plan={executionEditor.plan} {...(executionEditor.segmentId ? { segmentId: executionEditor.segmentId } : {})} onClose={() => setExecutionEditor(null)} onConfirm={confirmPlanCompletion} />}
       {overdueEditor && <OverdueRescheduleModal initial={overdueEditor} onClose={() => setOverdueEditor(null)} onSave={(value) => { void weekUp.dispatch({ type: "plan.overdue.reschedule", id: overdueEditor.id, ...value }); setOverdueEditor(null); }} />}
       {settingsOpen && <SettingsModal state={weekUp.state} onClose={() => setSettingsOpen(false)} onConfigureSync={(baseUrl) => void weekUp.dispatch({ type: "learning-more.configure", baseUrl })} onConfigureReview={(apiBaseUrl) => void weekUp.dispatch({ type: "ai-review.configure", preferredProvider: "api", apiBaseUrl })} onRestore={(state) => void weekUp.replace(state)} />}
       {completionFeedback && <CompletionCelebration feedback={completionFeedback} attributes={attributes} onClose={() => setCompletionFeedback(null)} />}

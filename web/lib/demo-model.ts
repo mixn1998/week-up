@@ -38,8 +38,12 @@ export type PlanItem = {
   categoryColor: string;
   categoryTextColor: string;
   completed: boolean;
+  completedAt?: string;
+  completedDate?: string;
+  completedEarly?: boolean;
   rewards: AttributeReward[];
   source?: "week-up" | "learning-more";
+  executionSource?: "week-up" | "learning-more";
   syncState?: "scheduled" | "in_progress" | "completed";
   dayIndex?: number;
   scheduleGroup?: "now" | "next" | "later" | "completed";
