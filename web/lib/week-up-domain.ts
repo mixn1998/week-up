@@ -2,7 +2,7 @@ import { colorIdForCategory, isCategoryColorId } from "./category-palette.ts";
 
 import { canRescheduleInsideWeekUp, participatesInOverdueQueue } from "./overdue-policy.ts";
 
-export const WEEK_UP_SCHEMA_VERSION = 17 as const;
+export const WEEK_UP_SCHEMA_VERSION = 18 as const;
 
 export type AiProviderId = "codex-cli" | "api";
 
@@ -645,16 +645,20 @@ function completePlan(
   const plan = state.plans.find((item) => item.id === planId && item.removedAt === undefined);
   if (!plan) throw new Error("plan_not_found");
   if (options.source === "week-up" && planIsOverdue(plan, options.completedAt)) throw new Error("plan_overdue");
+  const actualSegments = options.actualSegments?.length
+    ? options.actualSegments
+    : configuredPlanSegments(plan);
+  const resolvedOptions = { ...options, actualSegments };
   const duplicateExternal = options.externalFactId && state.completionFacts.find((fact) => fact.externalFactId === options.externalFactId && fact.revertedAt === undefined);
   if (duplicateExternal) {
-    const updated = mergeCompletionFactDetails(duplicateExternal, options);
+    const updated = mergeCompletionFactDetails(duplicateExternal, resolvedOptions);
     return updated === duplicateExternal
       ? unchanged(state, duplicateExternal.id)
       : changed(state, { completionFacts: state.completionFacts.map((fact) => fact.id === updated.id ? updated : fact) }, duplicateExternal.id);
   }
   const existing = activeCompletion(state, planId);
   if (existing) {
-    const updated = mergeCompletionFactDetails(existing, options);
+    const updated = mergeCompletionFactDetails(existing, resolvedOptions);
     return updated === existing
       ? unchanged(state, existing.id)
       : changed(state, { completionFacts: state.completionFacts.map((fact) => fact.id === updated.id ? updated : fact) }, existing.id);
@@ -667,7 +671,7 @@ function completePlan(
     completedAt: options.completedAt,
     source: options.source,
     ...(options.externalFactId ? { externalFactId: options.externalFactId } : {}),
-    actualSegments: normalizeActualSegments(options.actualSegments),
+    actualSegments: normalizeActualSegments(actualSegments),
     rewardSnapshot,
   };
   const transactions = rewardSnapshot.map<XpTransaction>((reward) => ({
@@ -692,6 +696,15 @@ function normalizeActualSegments(segments: readonly PlanTimeSegmentInput[] | und
     unique.set(`${segment.startAt}\u0000${segment.endAt}`, { startAt: segment.startAt, endAt: segment.endAt });
   }
   return [...unique.values()].sort((left, right) => left.startAt.localeCompare(right.startAt) || left.endAt.localeCompare(right.endAt));
+}
+
+function configuredPlanSegments(plan: Pick<PlanRecord, "startAt" | "endAt" | "timeSegments" | "timeStatus">): readonly PlanTimeSegmentInput[] {
+  if (plan.timeStatus === "unscheduled") return [];
+  return normalizeActualSegments(
+    plan.timeSegments?.length
+      ? plan.timeSegments.map(({ startAt, endAt }) => ({ startAt, endAt }))
+      : [{ startAt: plan.startAt, endAt: plan.endAt }],
+  );
 }
 
 function mergeCompletionFactDetails(
@@ -1209,8 +1222,28 @@ export function dispatchWeekUp(state: WeekUpState, command: WeekUpCommand, conte
           next = { ...next, category: project.category, unitKind: project.unit, unitQuantity: derived.quantity, rewards: derived.rewards };
         }
       }
+      const completion = activeCompletion(state, current.id);
+      const scheduleChanged = makesUnscheduled || requestedSegments !== undefined;
+      if (completion && current.source === "week-up" && scheduleChanged && next.timeSegments?.length) {
+        next = {
+          ...next,
+          timeSegments: next.timeSegments.map((segment) => ({
+            ...segment,
+            completedAt: segment.completedAt ?? completion.completedAt,
+          })),
+        };
+      }
       let base: WeekUpState = { ...state, plans: state.plans.map((item) => item.id === command.id ? next : item) };
-      if (activeCompletion(state, current.id) && !allSegmentsCompleted(next)) base = revertPlanCompletionInState(base, current.id, context, now);
+      if (completion && current.source === "week-up" && scheduleChanged) {
+        base = {
+          ...base,
+          completionFacts: base.completionFacts.map((fact) => fact.id === completion.id
+            ? { ...fact, actualSegments: configuredPlanSegments(next) }
+            : fact),
+        };
+      } else if (completion && !allSegmentsCompleted(next)) {
+        base = revertPlanCompletionInState(base, current.id, context, now);
+      }
       return changed(state, { plans: base.plans, completionFacts: base.completionFacts, xpTransactions: base.xpTransactions }, command.id);
     }
     case "plan.remove": {
@@ -1823,7 +1856,7 @@ export function migrateWeekUpState(value: unknown): WeekUpState {
   if (value === undefined || value === null) return createEmptyWeekUpState();
   if (typeof value !== "object") throw new Error("database_state_invalid");
   const version = (value as { schemaVersion?: unknown }).schemaVersion;
-  if (version !== 1 && version !== 2 && version !== 3 && version !== 4 && version !== 5 && version !== 6 && version !== 7 && version !== 8 && version !== 9 && version !== 10 && version !== 11 && version !== 12 && version !== 13 && version !== 14 && version !== 15 && version !== 16 && version !== WEEK_UP_SCHEMA_VERSION) throw new Error("database_schema_unsupported");
+  if (version !== 1 && version !== 2 && version !== 3 && version !== 4 && version !== 5 && version !== 6 && version !== 7 && version !== 8 && version !== 9 && version !== 10 && version !== 11 && version !== 12 && version !== 13 && version !== 14 && version !== 15 && version !== 16 && version !== 17 && version !== WEEK_UP_SCHEMA_VERSION) throw new Error("database_schema_unsupported");
   type MigratableSettlement = Omit<SettlementRecord, "harvest"> & {
     harvest?: SettlementRecord["harvest"];
     reflection?: string;
@@ -1842,7 +1875,7 @@ export function migrateWeekUpState(value: unknown): WeekUpState {
     revertedAt?: string;
   }>;
   const raw = value as Omit<WeekUpState, "schemaVersion" | "attributeCategories" | "projectCategories" | "plans" | "projects" | "learningMoreCourses" | "learningMoreLessons" | "completionFacts" | "dailySettlements" | "settlements" | "aiReview"> & {
-    schemaVersion: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 17;
+    schemaVersion: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 17 | 18;
     attributeCategories?: readonly MigratableCategory[];
     projectCategories?: readonly MigratableCategory[];
     plans: readonly (Omit<PlanRecord, "rewardMode"> & Partial<Pick<PlanRecord, "rewardMode">>)[];
@@ -1861,6 +1894,7 @@ export function migrateWeekUpState(value: unknown): WeekUpState {
     return counts;
   }, new Map());
   const completionFacts: CompletionFact[] = raw.completionFacts.map((fact) => {
+    const plan = raw.plans.find((item) => item.id === fact.planId);
     const legacySegments = legacyExecutionRecords
       .filter((record) =>
         record.revertedAt === undefined
@@ -1874,9 +1908,16 @@ export function migrateWeekUpState(value: unknown): WeekUpState {
         )
       )
       .map(({ startAt, endAt }) => ({ startAt, endAt }));
+    const configuredSegments = plan ? configuredPlanSegments(plan) : [];
     return {
       ...fact,
-      actualSegments: normalizeActualSegments(fact.actualSegments ?? legacySegments),
+      actualSegments: normalizeActualSegments(
+        fact.actualSegments?.length
+          ? fact.actualSegments
+          : legacySegments.length
+            ? legacySegments
+            : configuredSegments,
+      ),
     };
   });
   const plans: PlanRecord[] = raw.plans.map((plan) => {

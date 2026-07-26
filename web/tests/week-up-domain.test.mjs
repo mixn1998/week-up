@@ -852,6 +852,126 @@ test("folds legacy execution records into their completion fact", () => {
   assert.equal("executionRecords" in migrated, false);
 });
 
+test("restores completion time from configured plan segments when migrating", () => {
+  const h = harness();
+  let state = addAttribute(h, createEmptyWeekUpState());
+  state = addPlan(h, state, state.attributes[0].id, {
+    timeSegments: [
+      { id: "morning", startAt: "2026-07-20T09:10:00+08:00", endAt: "2026-07-20T09:55:00+08:00" },
+      { id: "afternoon", startAt: "2026-07-20T14:00:00+08:00", endAt: "2026-07-20T14:45:00+08:00" },
+    ],
+  });
+  state = h.run(state, {
+    type: "plan.complete",
+    id: state.plans[0].id,
+    completedAt: "2026-07-20T15:00:00+08:00",
+  });
+
+  const migrated = migrateWeekUpState({
+    ...state,
+    schemaVersion: 17,
+    completionFacts: state.completionFacts.map((fact) => ({ ...fact, actualSegments: [] })),
+  });
+
+  assert.deepEqual(migrated.completionFacts[0].actualSegments, [
+    { startAt: "2026-07-20T09:10:00+08:00", endAt: "2026-07-20T09:55:00+08:00" },
+    { startAt: "2026-07-20T14:00:00+08:00", endAt: "2026-07-20T14:45:00+08:00" },
+  ]);
+});
+
+test("restores Learning MORE completion time from synchronized lesson segments", () => {
+  const h = harness();
+  let state = addAttribute(h, createEmptyWeekUpState());
+  state = addPlan(h, state, state.attributes[0].id, {
+    source: "learning-more",
+    sourceRef: "learning-more:schedule-1",
+    sourceLessonId: "lesson-1",
+    sourceCourseId: "course-1",
+    timeStatus: "scheduled",
+    timeSegments: [{
+      id: "synced-lesson",
+      startAt: "2026-07-20T13:15:00+08:00",
+      endAt: "2026-07-20T14:05:00+08:00",
+    }],
+  });
+  state = h.run(state, {
+    type: "plan.complete",
+    id: state.plans[0].id,
+    source: "learning-more",
+    completedAt: "2026-07-20T14:05:00+08:00",
+  });
+
+  const migrated = migrateWeekUpState({
+    ...state,
+    schemaVersion: 17,
+    completionFacts: state.completionFacts.map((fact) => ({ ...fact, actualSegments: [] })),
+  });
+
+  assert.deepEqual(migrated.completionFacts[0].actualSegments, [{
+    startAt: "2026-07-20T13:15:00+08:00",
+    endAt: "2026-07-20T14:05:00+08:00",
+  }]);
+});
+
+test("completing a configured plan records its plan segments as execution time", () => {
+  const h = harness();
+  let state = addAttribute(h, createEmptyWeekUpState());
+  state = addPlan(h, state, state.attributes[0].id, {
+    timeSegments: [
+      { id: "first", startAt: "2026-07-20T09:00:00+08:00", endAt: "2026-07-20T09:30:00+08:00" },
+      { id: "second", startAt: "2026-07-20T15:00:00+08:00", endAt: "2026-07-20T15:30:00+08:00" },
+    ],
+  });
+
+  state = h.run(state, {
+    type: "plan.complete",
+    id: state.plans[0].id,
+    completedAt: "2026-07-20T16:00:00+08:00",
+  });
+
+  assert.deepEqual(state.completionFacts[0].actualSegments, [
+    { startAt: "2026-07-20T09:00:00+08:00", endAt: "2026-07-20T09:30:00+08:00" },
+    { startAt: "2026-07-20T15:00:00+08:00", endAt: "2026-07-20T15:30:00+08:00" },
+  ]);
+});
+
+test("editing time on a completed ordinary plan updates execution without undoing completion", () => {
+  const h = harness();
+  let state = addAttribute(h, createEmptyWeekUpState());
+  state = addPlan(h, state, state.attributes[0].id);
+  const planId = state.plans[0].id;
+  state = h.run(state, {
+    type: "plan.complete",
+    id: planId,
+    completedAt: "2026-07-20T10:00:00+08:00",
+  });
+  const factId = state.completionFacts[0].id;
+
+  state = h.run(state, {
+    type: "plan.update",
+    id: planId,
+    patch: {
+      startAt: "2026-07-20T14:00:00+08:00",
+      endAt: "2026-07-20T15:00:00+08:00",
+      timeStatus: "scheduled",
+      timeSegments: [{
+        id: "edited",
+        startAt: "2026-07-20T14:00:00+08:00",
+        endAt: "2026-07-20T15:00:00+08:00",
+      }],
+    },
+  });
+
+  const fact = state.completionFacts.find((item) => item.id === factId);
+  assert.equal(fact.revertedAt, undefined);
+  assert.deepEqual(fact.actualSegments, [{
+    startAt: "2026-07-20T14:00:00+08:00",
+    endAt: "2026-07-20T15:00:00+08:00",
+  }]);
+  assert.equal(state.plans[0].timeSegments[0].completedAt, "2026-07-20T10:00:00+08:00");
+  assert.equal(totalXpForAttribute(state, state.attributes[0].id), 2);
+});
+
 test("migrates legacy Learning MORE clock times back to time-unconfigured", () => {
   const h = harness();
   let state = addAttribute(h, createEmptyWeekUpState());

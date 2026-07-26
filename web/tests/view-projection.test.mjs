@@ -91,6 +91,8 @@ test("keeps an untimed completion visible at the top of its completion day", () 
       category: "Work",
       startAt: "2026-07-29T17:00:00+08:00",
       endAt: "2026-07-29T19:00:00+08:00",
+      timeStatus: "unscheduled",
+      timeSegments: [],
       goalIds: [],
       rewards: [],
     },

@@ -193,7 +193,24 @@ test("opens the month calendar directly from the month dashboard", async () => {
   assert.match(monthDashboard, /打开月日历/);
   assert.doesNotMatch(monthDashboard, /＋ 月方向/);
   assert.match(page, /onOpenCalendar=\{\(\) => openCalendar\("month"\)\}/);
-  assert.match(page, /<CalendarView plans=\{calendarContent === "timeline" \? weekUp\.view\.timelinePlans : plans\} initialMode=\{calendarInitialMode\} content=\{calendarContent\}/);
+  assert.match(page, /<CalendarView plans=\{calendarContent === "timeline" \? weekUp\.view\.timelinePlans : plans\} unconfiguredPlans=\{plans\} untimedCompletionPlans=\{weekUp\.view\.timelinePlans\} settledDates=\{weekUp\.state\.dailySettlements\.map/);
+});
+
+test("offers one visually integrated quick weight entry until today is recorded", async () => {
+  const [page, css] = await Promise.all([
+    readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
+  ]);
+  assert.match(page, /const hasTodayWeight = weights\.some\(\(entry\) => entry\.date === currentLocalDate\(\)\)/);
+  assert.match(page, /!hasTodayWeight && <QuickWeightEntry initialValue=\{latest\?\.value\} onSave=\{onRecordWeight\} \/>/);
+  assert.match(page, /className="weight-form weight-form--quick"/);
+  assert.match(page, /保存记录/);
+  assert.match(page, /onRecordWeight=\{addWeight\}/);
+  const weightView = page.slice(page.indexOf("function WeightView"), page.indexOf("function RewardAttributeTiles"));
+  assert.doesNotMatch(weightView, /className="weight-form"/);
+  assert.match(css, /\.weight-form--quick \{[^}]*width: min\(100%,240px\)/);
+  assert.match(css, /\.weight-form--quick input:focus, \.weight-form--quick input:focus-visible \{ outline: none; box-shadow: none; \}/);
+  assert.match(css, /\.weight-form--quick \.pixel-button \{[^}]*min-height: 38px/);
 });
 
 test("keeps unscheduled plans outside time slots and uses one clickable time ticket", async () => {
@@ -210,6 +227,10 @@ test("keeps unscheduled plans outside time slots and uses one clickable time tic
   assert.match(page, /点击时间票券直接设置/);
   assert.match(page, /plan-time--button/);
   assert.match(css, /\.unscheduled-dock/);
+  assert.match(css, /\.drawer-plan__time \{[^}]*background: var\(--yellow\)/);
+  assert.match(css, /button\.drawer-plan__time \{ cursor: pointer; \}/);
+  assert.match(css, /button\.drawer-plan__time:hover, button\.drawer-plan__time:focus-visible/);
+  assert.doesNotMatch(css, /\.drawer-plan__time\.is-unscheduled \{[^}]*font-family/);
   assert.match(css, /\.dashboard-action-list \{[^}]*grid-template-columns: repeat\(2,minmax\(0,1fr\)\)/);
 });
 
@@ -217,9 +238,13 @@ test("shows untimed completion facts in the Timeline top area", async () => {
   const page = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
   assert.doesNotMatch(page, /\{content === "schedule" && <div className="unscheduled-dock">/);
   assert.match(page, /content === "timeline" \? "未配置时间" : "待安排"/);
-  assert.match(page, /const countDescription = content === "timeline" \? "条完成记录未配置实际时间"/);
-  assert.match(page, /content === "timeline" \? "已完成但未记录实际时段"/);
-  assert.match(page, /readOnly=\{content === "timeline"\}/);
+  assert.match(page, /const count = unconfiguredPlansForDate\(date\.key\)\.length/);
+  assert.match(page, /const countDescription = content === "timeline" \? "项未配置时间任务"/);
+  assert.match(page, /content === "timeline" \? "未配置时间任务" : "待安排"/);
+  assert.match(page, /unconfiguredPlans=\{plans\}/);
+  assert.match(page, /selectUnconfiguredPlansForDate/);
+  assert.match(page, /settledDates=\{weekUp\.state\.dailySettlements\.map/);
+  assert.match(page, /selectedUnscheduled\.map\(\(plan\) => <CalendarDrawerPlan[^>]*mode=\{mode\} onEditPlan=\{onEditPlan\}/);
 });
 
 test("does not hide non-overlapping calendar plans behind a fixed-count overflow ticket", async () => {
