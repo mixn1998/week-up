@@ -1065,10 +1065,21 @@ button.drawer-plan__time:hover, button.drawer-plan__time:focus-visible { backgro
 .chart-legend i.target { border-style: dashed; background: var(--yellow); }
 .weight-history { margin-top: 22px; padding: 20px; }
 .history-table { margin-top: 14px; border: 2px solid var(--ink); }
-.history-table > div { display: grid; grid-template-columns: 1fr 100px 120px; align-items: center; padding: 10px 12px; border-bottom: 1px solid rgba(48,36,71,.25); }
+.history-table > div { display: grid; grid-template-columns: 1fr 100px 160px; align-items: center; padding: 10px 12px; border-bottom: 1px solid rgba(48,36,71,.25); }
 .history-table > div:last-child { border-bottom: 0; }
 .history-table b { font-family: Consolas, monospace; }
 .history-table small { color: var(--muted); text-align: right; }
+.history-table__status { display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
+.history-table__status em { font-style: normal; }
+.weight-history-edit { min-height: 30px; padding: 4px 9px; border: 2px solid var(--ink); background: var(--yellow); color: var(--ink); font-size: 10px; font-weight: 900; box-shadow: 2px 2px 0 var(--ink); }
+.weight-history-editor { grid-column: 2 / -1; display: flex; align-items: center; justify-content: flex-end; gap: 7px; }
+.weight-history-editor > div { display: flex; align-items: center; border: 2px solid var(--ink); background: white; box-shadow: 2px 2px 0 var(--ink); }
+.weight-history-editor input { width: 78px; min-height: 32px; padding: 4px 6px; border: 0; font-family: Consolas,monospace; font-weight: 900; }
+.weight-history-editor input:focus, .weight-history-editor input:focus-visible { outline: none; box-shadow: none; }
+.weight-history-editor span { padding-right: 7px; color: var(--muted); font-size: 10px; }
+.weight-history-editor button { min-height: 34px; padding: 5px 9px; border: 2px solid var(--ink); background: white; font-size: 10px; font-weight: 900; box-shadow: 2px 2px 0 var(--ink); }
+.weight-history-editor button.is-save { background: var(--pink); color: white; }
+.weight-history-editor button:disabled { opacity: .45; box-shadow: none; }
 .pagination { display: flex; align-items: center; justify-content: center; gap: 16px; margin-top: 14px; }
 .pagination button { min-height: 34px; padding: 5px 10px; border: 2px solid var(--ink); background: white; font-weight: 900; }
 .pagination button:disabled { opacity: .4; }
@@ -1760,6 +1771,8 @@ button.drawer-plan__time:hover, button.drawer-plan__time:focus-visible { backgro
   .weight-detail .section-heading { align-items: flex-start; flex-direction: column; }
   .history-table > div { grid-template-columns: 1fr auto; }
   .history-table small { grid-column: 1 / -1; text-align: left; }
+  .history-table__status { justify-content: flex-start; }
+  .weight-history-editor { grid-column: 1 / -1; justify-content: flex-start; margin-top: 7px; }
   .completion-stage { align-items: flex-end; padding: 14px 12px 88px; }
   .settlement-card { width: 100%; max-height: calc(100vh - 112px); padding: 18px 16px 15px; overflow-y: auto; box-shadow: 6px 6px 0 var(--ink); }
   .completion-clear > span { width: 48px; height: 48px; font-size: 25px; }
