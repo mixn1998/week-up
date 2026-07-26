@@ -124,3 +124,57 @@ test("keeps an untimed completion visible at the top of its completion day", () 
     }],
   );
 });
+
+test("projects each completed segment into Timeline before the whole plan is complete", () => {
+  let sequence = 0;
+  const context = {
+    now: () => "2026-07-26T12:00:00+08:00",
+    id: (prefix) => `${prefix}-${++sequence}`,
+  };
+  const run = (state, command) => dispatchWeekUp(state, command, context).state;
+  let state = createEmptyWeekUpState();
+  state = run(state, {
+    type: "plan.create",
+    value: {
+      title: "Segmented routine",
+      detail: "",
+      category: "Life",
+      startAt: "2026-07-26T08:30:00+08:00",
+      endAt: "2026-07-26T23:40:00+08:00",
+      timeSegments: [
+        { id: "morning", startAt: "2026-07-26T08:30:00+08:00", endAt: "2026-07-26T08:40:00+08:00" },
+        { id: "night", startAt: "2026-07-26T23:30:00+08:00", endAt: "2026-07-26T23:40:00+08:00" },
+      ],
+      goalIds: [],
+      rewards: [],
+    },
+  });
+  const planId = state.plans[0].id;
+
+  state = run(state, { type: "plan.segment.complete", id: planId, segmentId: "morning" });
+  let view = projectWeekUpView(state, new Date("2026-07-26T12:00:00+08:00"));
+  assert.equal(state.completionFacts.length, 0);
+  assert.equal(view.plans.find((plan) => plan.id === planId)?.completed, false);
+  assert.deepEqual(
+    view.timelinePlans.map(({ calendarSourceId, scheduledDate, start, end }) => ({ calendarSourceId, scheduledDate, start, end })),
+    [{ calendarSourceId: planId, scheduledDate: "2026-07-26", start: "08:30", end: "08:40" }],
+  );
+
+  state = run(state, { type: "plan.segment.complete", id: planId, segmentId: "night" });
+  view = projectWeekUpView(state, new Date("2026-07-26T23:50:00+08:00"));
+  assert.equal(state.completionFacts.filter((fact) => fact.revertedAt === undefined).length, 1);
+  assert.deepEqual(
+    view.timelinePlans.map(({ calendarSourceId, start, end }) => ({ calendarSourceId, start, end })),
+    [
+      { calendarSourceId: planId, start: "08:30", end: "08:40" },
+      { calendarSourceId: planId, start: "23:30", end: "23:40" },
+    ],
+  );
+
+  state = run(state, { type: "plan.segment.undo", id: planId, segmentId: "morning" });
+  view = projectWeekUpView(state, new Date("2026-07-26T23:55:00+08:00"));
+  assert.deepEqual(
+    view.timelinePlans.map(({ calendarSourceId, start, end }) => ({ calendarSourceId, start, end })),
+    [{ calendarSourceId: planId, start: "23:30", end: "23:40" }],
+  );
+});

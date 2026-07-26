@@ -1461,11 +1461,10 @@ export function dispatchWeekUp(state: WeekUpState, command: WeekUpCommand, conte
       if (!allSegmentsCompleted(updatedPlan)) {
         return changed(state, { plans: prepared.plans }, command.segmentId);
       }
-      const actualSegments = (updatedPlan.timeSegments ?? []).flatMap((segment): PlanTimeSegmentInput[] =>
-        segment.actualStartAt && segment.actualEndAt
-          ? [{ startAt: segment.actualStartAt, endAt: segment.actualEndAt }]
-          : []
-      );
+      const actualSegments = (updatedPlan.timeSegments ?? []).map((segment): PlanTimeSegmentInput => ({
+        startAt: segment.actualStartAt ?? segment.startAt,
+        endAt: segment.actualEndAt ?? segment.endAt,
+      }));
       const outcome = completePlan(prepared, plan.id, context, {
         source: "week-up",
         completedAt,

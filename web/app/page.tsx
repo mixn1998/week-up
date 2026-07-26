@@ -26,7 +26,7 @@ import { useWeekUp } from "../lib/use-week-up";
 import { AiStatusControl } from "./ai-status-control";
 import { ExecutionCompletionModal } from "./execution-completion-modal";
 import { MilestoneRunner } from "./milestone-runner";
-import { exportWeekUpBackup, importWeekUpBackup, type AttributeCategoryRecord, type AttributeRecord, type CompletionFact, type GoalRecord, type LearningMoreCourse, type LearningMoreLesson, type PlanRecord, type PlanTimeSegment, type PlanTimeSegmentInput, type ProjectRecord, type RewardUnit, type SettlementRecord, type SkillbookRecord, type WeekUpState } from "../lib/week-up-domain";
+import { exportWeekUpBackup, importWeekUpBackup, type AttributeCategoryRecord, type AttributeRecord, type CompletionFact, type GoalRecord, type LearningMoreCourse, type LearningMoreLesson, type PlanRecord, type PlanTimeSegment, type PlanTimeSegmentInput, type ProjectRecord, type RewardUnit, type SettlementRecord, type SkillbookRecord, type WeekUpCommand, type WeekUpState } from "../lib/week-up-domain";
 
 type TabId = "today" | "week" | "month" | "calendar" | "action-config" | "growth" | "weight";
 
@@ -1361,12 +1361,28 @@ export default function Home() {
     setQuickAddOpen(true);
   };
 
+  const dispatchPlanCompletion = (record: PlanRecord, plan: PlanItem | undefined, command: WeekUpCommand) => {
+    void weekUp.dispatch(command).then((next) => {
+      const savedPlan = next.plans.find((item) => item.id === record.id);
+      const completed = next.completionFacts.some((fact) => fact.planId === record.id && fact.revertedAt === undefined);
+      if (!completed) return;
+      showCompletionFeedback({ kind: "single", title: savedPlan?.title ?? plan?.title ?? record.title, rewards: [...(savedPlan?.rewards ?? plan?.rewards ?? record.rewards)], source: "week-up" });
+    });
+  };
+
   const completePlan = (id: string, segmentId?: string) => {
     const plan = plans.find((item) => item.id === id);
     if (!plan || plan.completed) return;
     const record = weekUp.state.plans.find((item) => item.id === id && item.removedAt === undefined);
     if (!record || record.source === "learning-more") return;
-    setExecutionEditor({ plan: record, ...(segmentId ? { segmentId } : {}) });
+    if (record.timeStatus === "unscheduled") {
+      setExecutionEditor({ plan: record, ...(segmentId ? { segmentId } : {}) });
+      return;
+    }
+    const command: WeekUpCommand = segmentId
+      ? { type: "plan.segment.complete", id: record.id, segmentId }
+      : { type: "plan.complete", id: record.id };
+    dispatchPlanCompletion(record, plan, command);
   };
 
   const confirmPlanCompletion = (value: { actualSegments: readonly PlanTimeSegmentInput[]; completedAt: string }) => {
@@ -1374,15 +1390,10 @@ export default function Home() {
     const { plan: record, segmentId } = executionEditor;
     const plan = plans.find((item) => item.id === record.id);
     setExecutionEditor(null);
-    void weekUp.dispatch(segmentId
+    const command: WeekUpCommand = segmentId
       ? { type: "plan.segment.complete", id: record.id, segmentId, actualSegment: value.actualSegments[0]!, completedAt: value.completedAt }
-      : { type: "plan.complete", id: record.id, actualSegments: value.actualSegments, completedAt: value.completedAt }
-    ).then((next) => {
-      const savedPlan = next.plans.find((item) => item.id === record.id);
-      const completed = next.completionFacts.some((fact) => fact.planId === record.id && fact.revertedAt === undefined);
-      if (!completed) return;
-      showCompletionFeedback({ kind: "single", title: savedPlan?.title ?? plan?.title ?? record.title, rewards: [...(savedPlan?.rewards ?? plan?.rewards ?? record.rewards)], source: "week-up" });
-    });
+      : { type: "plan.complete", id: record.id, actualSegments: value.actualSegments, completedAt: value.completedAt };
+    dispatchPlanCompletion(record, plan, command);
   };
 
   const undoPlan = (id: string, segmentId?: string) => {
