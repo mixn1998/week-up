@@ -213,6 +213,21 @@ test("offers one visually integrated quick weight entry until today is recorded"
   assert.match(css, /\.weight-form--quick \.pixel-button \{[^}]*min-height: 38px/);
 });
 
+test("allows an inline correction only for today's weight record", async () => {
+  const [page, css] = await Promise.all([
+    readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
+  ]);
+  const weightView = page.slice(page.indexOf("function WeightView"), page.indexOf("function RewardAttributeTiles"));
+  assert.match(weightView, /const todayKey = currentLocalDate\(\)/);
+  assert.match(weightView, /const isToday = entry\.date === todayKey/);
+  assert.match(weightView, /aria-label="修正今日体重"/);
+  assert.match(weightView, /onCorrectToday\(Math\.round\(parsedTodayValue \* 10\) \/ 10\)/);
+  assert.match(page, /onCorrectToday=\{addWeight\}/);
+  assert.match(css, /\.weight-history-editor \{/);
+  assert.match(css, /\.weight-history-edit \{/);
+});
+
 test("keeps unscheduled plans outside time slots and uses one clickable time ticket", async () => {
   const [page, css] = await Promise.all([
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),

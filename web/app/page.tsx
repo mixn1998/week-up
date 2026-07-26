@@ -948,10 +948,13 @@ function GrowthView({ attributes, skillbooks, goals }: { attributes: Attribute[]
   );
 }
 
-function WeightView({ entries, target, onTarget }: { entries: WeightEntry[]; target?: number; onTarget: (value: number) => void }) {
+function WeightView({ entries, target, onTarget, onCorrectToday }: { entries: WeightEntry[]; target?: number; onTarget: (value: number) => void; onCorrectToday: (value: number) => void }) {
   const [range, setRange] = useState<7 | 30 | 90 | 365>(30);
   const [page, setPage] = useState(1);
   const [targetValue, setTargetValue] = useState(target?.toFixed(1) ?? "");
+  const [editingToday, setEditingToday] = useState(false);
+  const [todayValue, setTodayValue] = useState("");
+  const todayKey = currentLocalDate();
   const averages = movingAverage(entries);
   const latest = entries.at(-1);
   const previous = entries.at(-2);
@@ -963,12 +966,23 @@ function WeightView({ entries, target, onTarget }: { entries: WeightEntry[]; tar
   const history = [...entries].reverse();
   const pageCount = Math.max(1, Math.ceil(history.length / pageSize));
   const pageEntries = history.slice((page - 1) * pageSize, page * pageSize);
+  const parsedTodayValue = Number(todayValue);
+  const todayValueValid = parsedTodayValue >= 20 && parsedTodayValue <= 300;
+  const submitTodayCorrection = (event: FormEvent) => {
+    event.preventDefault();
+    if (!todayValueValid) return;
+    onCorrectToday(Math.round(parsedTodayValue * 10) / 10);
+    setEditingToday(false);
+  };
   return (
     <div className="view">
       <div className="page-title"><div><span className="eyebrow">BODY TRACK</span><h1>体重趋势</h1><p>只记录事实与趋势，不提供健康判断。</p></div></div>
       <div className="weight-overview"><article className="stat-card pixel-card"><span>最新体重</span><strong>{latest ? latest.value.toFixed(1) : "—"} <small>kg</small></strong><em>{latest && previous ? `较上次 ${(latest.value - previous.value).toFixed(1)} kg` : "暂无历史记录"}</em></article><article className="stat-card pixel-card"><span>7 日移动平均</span><strong>{averages.at(-1)?.toFixed(1) ?? "—"} <small>kg</small></strong><em>{entries.length > 1 ? `基于 ${Math.min(entries.length, 7)} 条有效记录` : "至少需要两条记录"}</em></article><article className="stat-card pixel-card"><span>目标体重</span><form className="target-weight-form" onSubmit={(event) => { event.preventDefault(); const parsed = Number(targetValue); if (parsed >= 20 && parsed <= 300) onTarget(parsed); }}><input aria-label="目标体重" type="number" min="20" max="300" step="0.1" value={targetValue} onChange={(event) => setTargetValue(event.target.value)} /><small>kg</small><button>保存</button></form><em>{target ? `目标线 ${target.toFixed(1)} kg` : "暂未设置目标"}</em></article></div>
       <section className="weight-detail pixel-card"><div className="section-heading"><div><span className="eyebrow">{range} DAYS</span><h2>每日值与移动平均</h2></div><div className="chart-range" aria-label="图表范围">{([7, 30, 90, 365] as const).map((valueOption) => <button className={range === valueOption ? "active" : ""} key={valueOption} onClick={() => setRange(valueOption)}>{valueOption === 365 ? "全部" : `${valueOption}日`}</button>)}</div></div><div className="chart-legend"><span><i className="raw" />每日值</span><span><i className="average" />7日均值</span><span><i className="target" />目标线</span>{rangeEntries.length > chartEntries.length && <em>{rangeEntries.length} 条记录已压缩为 {chartEntries.length} 个关键点</em>}</div><WeightChart entries={chartEntries} target={target} averageValues={chartAverages} /></section>
-      <section className="pixel-card weight-history"><div className="section-heading section-heading--small"><div><span className="eyebrow">HISTORY</span><h2>历史记录</h2></div><span>共 {entries.length} 条 · 每页 50 条</span></div>{entries.length === 0 ? <div className="mini-empty">暂无体重记录</div> : <><div className="history-table">{pageEntries.map((entry, index) => <div key={entry.date}><span>{entry.date} · {entry.label}</span><b>{entry.value.toFixed(1)}</b><small>{page === 1 && index === 0 ? "当前有效值" : "已同步"}</small></div>)}</div><div className="pagination"><button disabled={page === 1} onClick={() => setPage((current) => Math.max(1, current - 1))}>← 上一页</button><span>第 {page} / {pageCount} 页</span><button disabled={page === pageCount} onClick={() => setPage((current) => Math.min(pageCount, current + 1))}>下一页 →</button></div></>}</section>
+      <section className="pixel-card weight-history"><div className="section-heading section-heading--small"><div><span className="eyebrow">HISTORY</span><h2>历史记录</h2></div><span>共 {entries.length} 条 · 每页 50 条</span></div>{entries.length === 0 ? <div className="mini-empty">暂无体重记录</div> : <><div className="history-table">{pageEntries.map((entry) => {
+        const isToday = entry.date === todayKey;
+        return <div key={entry.date}><span>{entry.date} · {entry.label}</span>{isToday && editingToday ? <form className="weight-history-editor" onSubmit={submitTodayCorrection}><div><input aria-label="修正今日体重" type="number" min="20" max="300" step="0.1" value={todayValue} onChange={(event) => setTodayValue(event.target.value)} autoFocus /><span>kg</span></div><button className="is-save" type="submit" disabled={!todayValueValid}>保存</button><button type="button" onClick={() => setEditingToday(false)}>取消</button></form> : <><b>{entry.value.toFixed(1)}</b><small className="history-table__status">{isToday ? <><em>当前有效值</em><button className="weight-history-edit" onClick={() => { setTodayValue(entry.value.toFixed(1)); setEditingToday(true); }}>修改</button></> : "已同步"}</small></>}</div>;
+      })}</div><div className="pagination"><button disabled={page === 1} onClick={() => setPage((current) => Math.max(1, current - 1))}>← 上一页</button><span>第 {page} / {pageCount} 页</span><button disabled={page === pageCount} onClick={() => setPage((current) => Math.min(pageCount, current + 1))}>下一页 →</button></div></>}</section>
     </div>
   );
 }
@@ -1431,7 +1445,7 @@ export default function Home() {
           {tab === "calendar" && <CalendarView plans={calendarContent === "timeline" ? weekUp.view.timelinePlans : plans} unconfiguredPlans={plans} untimedCompletionPlans={weekUp.view.timelinePlans} settledDates={weekUp.state.dailySettlements.map((settlement) => settlement.localDate)} initialMode={calendarInitialMode} content={calendarContent} onEditPlan={(id) => setPlanEditor(weekUp.state.plans.find((plan) => plan.id === id) ?? null)} />}
           {tab === "action-config" && <ActionConfigView attributes={attributes} attributeCategories={weekUp.state.attributeCategories} projectCategories={weekUp.state.projectCategories} projects={weekUp.state.projects.filter((project) => project.source === "week-up" && project.archivedAt === undefined)} courses={weekUp.state.learningMoreCourses} courseProjects={weekUp.state.projects.filter((project) => project.source === "learning-more" && project.archivedAt === undefined)} onNewAttribute={() => setAttributeEditor("new")} onEditAttribute={(attribute) => setAttributeEditor(weekUp.state.attributes.find((item) => item.id === attribute.id) ?? null)} onNewProject={() => setProjectEditor("new")} onEditProject={setProjectEditor} onConfigureCourse={setProjectEditor} onCreateCategory={(name) => { void weekUp.dispatch({ type: "attribute-category.create", name }); }} onRenameCategory={(id, name) => { void weekUp.dispatch({ type: "attribute-category.rename", id, name }); }} onDeleteCategory={(id) => { void weekUp.dispatch({ type: "attribute-category.delete", id }); }} onCreateProjectCategory={(name, color) => { void weekUp.dispatch({ type: "project-category.create", name, color }); }} onRenameProjectCategory={(id, name, color) => { void weekUp.dispatch({ type: "project-category.rename", id, name, color }); }} onDeleteProjectCategory={(id) => { void weekUp.dispatch({ type: "project-category.delete", id }); }} />}
           {tab === "growth" && <GrowthView attributes={weekUp.view.catalogAttributes} skillbooks={weekUp.state.skillbooks} goals={weekUp.state.goals} />}
-          {tab === "weight" && <WeightView entries={weights} target={weekUp.state.preferences.targetWeightKg} onTarget={(valueKg) => void weekUp.dispatch({ type: "weight.target", valueKg })} />}
+          {tab === "weight" && <WeightView entries={weights} target={weekUp.state.preferences.targetWeightKg} onTarget={(valueKg) => void weekUp.dispatch({ type: "weight.target", valueKg })} onCorrectToday={addWeight} />}
         </div>
       </main>
       <nav className="mobile-nav" aria-label="移动端主导航">{NAV_ITEMS.map((item) => <button key={item.id} className={tab === item.id ? "active" : ""} onClick={() => navigateToTab(item.id)}><span>{item.icon}</span><small>{item.label}</small></button>)}</nav>
