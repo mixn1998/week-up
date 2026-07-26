@@ -5,6 +5,9 @@ import {
   createEmptyWeekUpState,
   currentWeightEntries,
   totalXpForAttribute,
+  type CompletionFact,
+  type PlanRecord,
+  type PlanTimeSegmentInput,
   type WeekUpCommand,
   type WeekUpState,
 } from "./week-up-domain.ts";
@@ -56,6 +59,65 @@ export type WeekUpViewModel = Readonly<{
   timelinePlans: PlanItem[];
   weights: WeightEntry[];
 }>;
+
+function projectTimelinePlan(
+  state: WeekUpState,
+  item: PlanRecord,
+  value: {
+    id: string;
+    segment?: PlanTimeSegmentInput;
+    completedAt: string;
+    executionSource: CompletionFact["source"];
+  },
+): PlanItem {
+  const currentProject = item.projectId
+    ? state.projects.find((project) => project.id === item.projectId)
+    : item.sourceCourseId
+      ? state.projects.find((project) => project.sourceCourseId === item.sourceCourseId)
+      : undefined;
+  const category = currentProject?.category ?? item.category;
+  const categoryColor = colorForCategory(category, state.projectCategories.find((entry) => entry.name === category)?.color);
+  const anchor = value.segment?.startAt ?? value.completedAt;
+  return {
+    id: value.id,
+    calendarSourceId: item.id,
+    ...(item.projectId ? { projectId: item.projectId } : {}),
+    scheduledDate: dateInShanghai(anchor),
+    title: item.title,
+    detail: item.detail,
+    start: value.segment ? timeInShanghai(value.segment.startAt) : "时间未配置",
+    end: value.segment ? timeInShanghai(value.segment.endAt) : "",
+    timeSegments: value.segment ? [{
+      id: value.id,
+      start: timeInShanghai(value.segment.startAt),
+      end: timeInShanghai(value.segment.endAt),
+      completed: true,
+    }] : [],
+    timeStatus: value.segment ? "scheduled" : "unscheduled",
+    category,
+    categoryColor,
+    categoryTextColor: readableTextColor(categoryColor),
+    completed: true,
+    completedAt: value.completedAt,
+    completedDate: dateInShanghai(value.completedAt),
+    completedEarly: completedBeforeSchedule(value.completedAt, item),
+    rewards: item.rewards.map((reward) => ({ ...reward })),
+    source: item.source,
+    executionSource: value.executionSource,
+    syncState: "completed",
+    dayIndex: dayIndexFor(anchor),
+    scheduleGroup: "completed",
+    rewardMode: item.rewardMode,
+    templateLabel: item.projectId
+      ? state.projects.find((project) => project.id === item.projectId)?.name
+      : item.sourceCourseId
+        ? state.learningMoreCourses.find((course) => course.courseId === item.sourceCourseId)?.title
+        : undefined,
+    unitLabel: item.unitKind && item.unitQuantity !== undefined
+      ? `${item.unitQuantity} ${item.unitKind === "hour" ? "时" : item.unitKind === "lesson" ? "节" : "次"}`
+      : undefined,
+  };
+}
 
 export function projectWeekUpView(state: WeekUpState, at = new Date()): WeekUpViewModel {
   const activeFacts = new Map(state.completionFacts.filter((fact) => fact.revertedAt === undefined).map((fact) => [fact.planId, fact]));
@@ -129,62 +191,34 @@ export function projectWeekUpView(state: WeekUpState, at = new Date()): WeekUpVi
   };
   });
   const activePlans = new Map(state.plans.filter((item) => item.removedAt === undefined).map((item) => [item.id, item]));
-  const timelinePlans: PlanItem[] = state.completionFacts
+  const completedTimelinePlans: PlanItem[] = state.completionFacts
     .filter((fact) => fact.revertedAt === undefined)
     .flatMap((fact): PlanItem[] => {
       const item = activePlans.get(fact.planId);
       if (!item) return [];
-      const currentProject = item.projectId
-        ? state.projects.find((project) => project.id === item.projectId)
-        : item.sourceCourseId
-          ? state.projects.find((project) => project.sourceCourseId === item.sourceCourseId)
-          : undefined;
-      const category = currentProject?.category ?? item.category;
-      const categoryColor = colorForCategory(category, state.projectCategories.find((entry) => entry.name === category)?.color);
       const segments = fact.actualSegments.length > 0 ? fact.actualSegments : [undefined];
-      return segments.map((segment, index): PlanItem => {
-        const anchor = segment?.startAt ?? fact.completedAt;
-        return {
+      return segments.map((segment, index) => projectTimelinePlan(state, item, {
         id: segment ? `${fact.id}:actual:${index}` : fact.id,
-        calendarSourceId: item.id,
-        ...(item.projectId ? { projectId: item.projectId } : {}),
-        scheduledDate: dateInShanghai(anchor),
-        title: item.title,
-        detail: item.detail,
-        start: segment ? timeInShanghai(segment.startAt) : "时间未配置",
-        end: segment ? timeInShanghai(segment.endAt) : "",
-        timeSegments: segment ? [{
-          id: `${fact.id}:actual:${index}`,
-          start: timeInShanghai(segment.startAt),
-          end: timeInShanghai(segment.endAt),
-          completed: true,
-        }] : [],
-        timeStatus: segment ? "scheduled" : "unscheduled",
-        category,
-        categoryColor,
-        categoryTextColor: readableTextColor(categoryColor),
-        completed: true,
+        ...(segment ? { segment } : {}),
         completedAt: fact.completedAt,
-        completedDate: dateInShanghai(fact.completedAt),
-        completedEarly: completedBeforeSchedule(fact.completedAt, item),
-        rewards: item.rewards.map((reward) => ({ ...reward })),
-        source: item.source,
         executionSource: fact.source,
-        syncState: "completed",
-        dayIndex: dayIndexFor(anchor),
-        scheduleGroup: "completed",
-        rewardMode: item.rewardMode,
-        templateLabel: item.projectId
-          ? state.projects.find((project) => project.id === item.projectId)?.name
-          : item.sourceCourseId
-            ? state.learningMoreCourses.find((course) => course.courseId === item.sourceCourseId)?.title
-            : undefined,
-        unitLabel: item.unitKind && item.unitQuantity !== undefined
-          ? `${item.unitQuantity} ${item.unitKind === "hour" ? "时" : item.unitKind === "lesson" ? "节" : "次"}`
-          : undefined,
-        };
-      });
-    })
+      }));
+    });
+  const partialSegmentTimelinePlans: PlanItem[] = state.plans
+    .filter((item) => item.removedAt === undefined && !activeFacts.has(item.id))
+    .flatMap((item) => (item.timeSegments ?? []).flatMap((segment): PlanItem[] => {
+      if (!segment.completedAt) return [];
+      return [projectTimelinePlan(state, item, {
+        id: `${item.id}:segment:${segment.id}`,
+        segment: {
+          startAt: segment.actualStartAt ?? segment.startAt,
+          endAt: segment.actualEndAt ?? segment.endAt,
+        },
+        completedAt: segment.completedAt,
+        executionSource: "week-up",
+      })];
+    }));
+  const timelinePlans = [...completedTimelinePlans, ...partialSegmentTimelinePlans]
     .sort((left, right) =>
       (left.scheduledDate ?? "").localeCompare(right.scheduledDate ?? "")
       || left.start.localeCompare(right.start)

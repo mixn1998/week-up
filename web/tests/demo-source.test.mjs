@@ -386,6 +386,16 @@ test("supports multiple execution segments with one final plan settlement", asyn
   assert.match(css, /\.segment-complete-button/);
 });
 
+test("confirms execution time only for plans without configured time", async () => {
+  const page = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
+  const completionFlow = page.slice(page.indexOf("const dispatchPlanCompletion ="), page.indexOf("const undoPlan ="));
+  assert.match(completionFlow, /record\.timeStatus === "unscheduled"/);
+  assert.match(completionFlow, /setExecutionEditor\(\{ plan: record/);
+  assert.match(completionFlow, /type: "plan\.segment\.complete"/);
+  assert.match(completionFlow, /type: "plan\.complete"/);
+  assert.match(completionFlow, /weekUp\.dispatch\(command\)\.then/);
+});
+
 test("keeps original edit times and allows every plan editor to clear them", async () => {
   const [page, css] = await Promise.all([
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
