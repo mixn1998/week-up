@@ -20,6 +20,7 @@ import { attributeGainsForCompletedDate, sortAttributeRewardsByAmount } from "..
 import { selectDailyPlans } from "../lib/daily-plan-selection";
 import { overdueDisposition } from "../lib/overdue-policy";
 import { summarizeWeekRouteDay } from "../lib/week-route-summary";
+import { selectUnconfiguredPlansForDate } from "../lib/unconfigured-time";
 import { expandRecurrenceDates, recurrenceSummary, type RecurrenceRule } from "../lib/recurrence";
 import { useWeekUp } from "../lib/use-week-up";
 import { AiStatusControl } from "./ai-status-control";
@@ -338,6 +339,20 @@ function WeightChart({ entries, target, compact = false, averageValues }: { entr
   );
 }
 
+function QuickWeightEntry({ initialValue, onSave }: { initialValue?: number; onSave: (value: number) => void }) {
+  const [value, setValue] = useState(initialValue?.toFixed(1) ?? "");
+  const submit = (event: FormEvent) => {
+    event.preventDefault();
+    const parsed = Number(value);
+    if (parsed >= 20 && parsed <= 300) onSave(Math.round(parsed * 10) / 10);
+  };
+  return <form className="weight-form weight-form--quick" onSubmit={submit}>
+    <label htmlFor="quick-weight">今日体重</label>
+    <div><input id="quick-weight" aria-label="今日体重快捷输入" type="number" min="20" max="300" step="0.1" value={value} onChange={(event) => setValue(event.target.value)} placeholder="--.-" /><span>kg</span></div>
+    <button className="pixel-button pixel-button--pink" type="submit" disabled={Number(value) < 20 || Number(value) > 300}>保存记录</button>
+  </form>;
+}
+
 function TodayView({
   plans,
   attributes,
@@ -347,6 +362,7 @@ function TodayView({
   onExternalComplete,
   onQuickAdd,
   onOpenWeight,
+  onRecordWeight,
   onEdit,
   onUndo,
   onRemove,
@@ -360,6 +376,7 @@ function TodayView({
   onExternalComplete: () => void;
   onQuickAdd: () => void;
   onOpenWeight: () => void;
+  onRecordWeight: (value: number) => void;
   onEdit: (id: string) => void;
   onUndo: (id: string, segmentId?: string) => void;
   onRemove: (id: string) => void;
@@ -383,6 +400,7 @@ function TodayView({
   const completed = completedPlans.length;
   const learningPlan = todayPlans.find((plan) => plan.source === "learning-more");
   const latest = weights.at(-1);
+  const hasTodayWeight = weights.some((entry) => entry.date === currentLocalDate());
   const averages = movingAverage(weights);
   const dailyGains = attributeGainsForCompletedDate(completionFacts, currentLocalDate())
     .map((reward) => ({ attribute: attributes.find((attribute) => attribute.id === reward.attributeId), amount: reward.amount }))
@@ -433,6 +451,7 @@ function TodayView({
           </section>
           <section className="pixel-card weight-widget">
             <div className="section-heading section-heading--small"><div><span className="eyebrow">BODY TRACK</span><h2>体重趋势</h2></div><button className="text-button" onClick={onOpenWeight}>展开 →</button></div>
+            {!hasTodayWeight && <QuickWeightEntry initialValue={latest?.value} onSave={onRecordWeight} />}
             {latest ? <div className="weight-stats"><strong>{latest.value.toFixed(1)}<small> kg</small></strong><div><small>7日均值</small><b>{averages.at(-1)?.toFixed(1) ?? "—"} kg</b></div></div> : <div className="mini-empty">还没有体重记录。进入体重趋势页录入第一条数据。</div>}
             <WeightChart entries={weights.slice(-14)} compact />
           </section>
@@ -711,7 +730,7 @@ function expandCalendarSegments(plans: readonly PlanItem[]): PlanItem[] {
     : [plan]);
 }
 
-function CalendarView({ plans, initialMode, content, onEditPlan }: { plans: PlanItem[]; initialMode: "week" | "month"; content: "timeline" | "schedule"; onEditPlan: (id: string) => void }) {
+function CalendarView({ plans, unconfiguredPlans, untimedCompletionPlans, settledDates, initialMode, content, onEditPlan }: { plans: PlanItem[]; unconfiguredPlans: PlanItem[]; untimedCompletionPlans: PlanItem[]; settledDates: readonly string[]; initialMode: "week" | "month"; content: "timeline" | "schedule"; onEditPlan: (id: string) => void }) {
   const todayKey = currentLocalDate();
   const weekRange = currentWeekRange();
   const todayIndex = Math.max(0, Math.min(6, Math.round((Date.parse(`${todayKey}T00:00:00Z`) - Date.parse(`${weekRange.startDate}T00:00:00Z`)) / 86_400_000)));
@@ -726,10 +745,18 @@ function CalendarView({ plans, initialMode, content, onEditPlan }: { plans: Plan
   const [monthAnchor, setMonthAnchor] = useState(todayKey.slice(0, 7));
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
   const [expandedDays, setExpandedDays] = useState<number[]>([]);
+  const settledDateSet = useMemo(() => new Set(settledDates), [settledDates]);
   const planDateKey = (plan: PlanItem) => plan.scheduledDate ?? shiftLocalDate(weekRange.startDate, plan.dayIndex ?? 0);
   const plansForDate = (dateKey: string) => plans
     .filter((plan) => planDateKey(plan) === dateKey)
     .sort((left, right) => left.start.localeCompare(right.start));
+  const unconfiguredPlansForDate = (dateKey: string) => selectUnconfiguredPlansForDate(
+    dateKey,
+    unconfiguredPlans,
+    untimedCompletionPlans,
+    settledDateSet,
+  )
+    .sort((left, right) => left.title.localeCompare(right.title, "zh-CN"));
   const monthStart = `${monthAnchor}-01`;
   const monthStartDate = new Date(`${monthStart}T00:00:00Z`);
   const monthGridStart = shiftLocalDate(monthStart, -((monthStartDate.getUTCDay() + 6) % 7));
@@ -746,7 +773,7 @@ function CalendarView({ plans, initialMode, content, onEditPlan }: { plans: Plan
     setSelectedDate(null);
   };
   const selectedPlans = selectedDate ? plansForDate(selectedDate).filter((plan) => mode === "week" || plan.completed) : [];
-  const selectedUnscheduled = selectedPlans.filter((plan) => plan.timeStatus === "unscheduled");
+  const selectedUnscheduled = selectedDate && mode === "week" ? unconfiguredPlansForDate(selectedDate) : [];
   const selectedTimed = selectedPlans.filter((plan) => mode === "month" || plan.timeStatus !== "unscheduled");
   const selectedDateLabel = selectedDate ? `${Number(selectedDate.slice(5, 7))}月${Number(selectedDate.slice(8, 10))}日` : "";
   return (
@@ -757,9 +784,9 @@ function CalendarView({ plans, initialMode, content, onEditPlan }: { plans: Plan
         <div className="unscheduled-dock">
           <div className="unscheduled-dock__label"><span>{content === "timeline" ? "UNTIMED" : "POCKET"}</span><b>{content === "timeline" ? "未配置时间" : "待安排"}</b></div>
           {dayDates.map((date, dayIndex) => {
-            const count = plansForDate(date.key).filter((plan) => plan.timeStatus === "unscheduled").length;
-            const countDescription = content === "timeline" ? "条完成记录未配置实际时间" : "项待安排计划";
-            return <button className={`${dayIndex === todayIndex ? "is-today" : ""}${count > 0 ? " has-items" : ""}`} key={date.key} disabled={count === 0} onClick={() => setSelectedDate(date.key)} aria-label={`${date.weekday}有${count}${countDescription}`}>{count > 0 ? <><strong>+{count}</strong><small>{content === "timeline" ? "展开完成记录" : "展开待安排"}</small></> : <span>—</span>}</button>;
+            const count = unconfiguredPlansForDate(date.key).length;
+            const countDescription = content === "timeline" ? "项未配置时间任务" : "项待安排计划";
+            return <button className={`${dayIndex === todayIndex ? "is-today" : ""}${count > 0 ? " has-items" : ""}`} key={date.key} disabled={count === 0} onClick={() => setSelectedDate(date.key)} aria-label={`${date.weekday}有${count}${countDescription}`}>{count > 0 ? <><strong>+{count}</strong><small>{content === "timeline" ? "展开未配置任务" : "展开待安排"}</small></> : <span>—</span>}</button>;
           })}
         </div>
         <div className="calendar-body"><div className="time-axis">{["06:00", "08:00", "10:00", "12:00", "14:00", "16:00", "18:00", "20:00", "22:00"].map((time) => <span key={time}>{time}</span>)}</div>{dayDates.map((date, dayIndex) => {
@@ -777,7 +804,7 @@ function CalendarView({ plans, initialMode, content, onEditPlan }: { plans: Plan
         {plans.length === 0 && <div className="calendar-empty">{content === "timeline" ? "本周还没有实际完成记录" : "本周没有已安排的计划"}</div>}
         <div className="mobile-agenda">{dayDates.map((date, dayIndex) => {
           const dayPlans = plansForDate(date.key);
-          const unscheduledPlans = dayPlans.filter((plan) => plan.timeStatus === "unscheduled");
+          const unscheduledPlans = unconfiguredPlansForDate(date.key);
           const timedPlans = expandCalendarSegments(dayPlans.filter((plan) => plan.timeStatus !== "unscheduled"));
           const expanded = expandedDays.includes(dayIndex);
           const shown = expanded ? timedPlans : timedPlans.slice(0, 6);
@@ -788,7 +815,7 @@ function CalendarView({ plans, initialMode, content, onEditPlan }: { plans: Plan
         <div className="month-calendar__weekdays">{weekdays.map((day) => <b key={day}>{day}</b>)}</div>
         <div className="month-calendar__grid">{monthCells.map((cell) => <div className={`month-day${cell.inMonth ? "" : " is-outside"}${cell.today ? " is-today" : ""}`} key={cell.key}><button className="month-day__number" onClick={() => setSelectedDate(cell.key)} aria-label={`查看${cell.key}完成内容`}><span>{cell.day}</span>{cell.plans.length > 0 ? <small>{cell.plans.length} 项完成</small> : cell.today && <small>今天</small>}</button><div className="month-day__plans">{cell.plans.slice(0, 3).map((plan) => <button className="month-plan-chip" style={{ "--category-color": plan.categoryColor, "--category-text": plan.categoryTextColor } as CSSProperties} key={plan.id} onClick={() => setSelectedDate(cell.key)}><i>✓</i><span>{plan.title}</span></button>)}</div>{cell.plans.length > 3 && <button className="month-day__more" onClick={() => setSelectedDate(cell.key)}>另有 {cell.plans.length - 3} 项完成</button>}</div>)}</div>
       </section>}
-      {selectedDate !== null && <div className="agenda-drawer pixel-card"><div className="section-heading"><div><span className="eyebrow">{mode === "month" ? "DONE TODAY" : content === "timeline" ? "COMPLETION FACTS" : "DAY AGENDA"}</span><h2>{selectedDateLabel} · {mode === "month" || content === "timeline" ? "完成记录" : "计划口袋"}</h2></div><button className="modal-close" onClick={() => setSelectedDate(null)}>×</button></div>{selectedPlans.length > 0 ? <>{mode === "week" && selectedUnscheduled.length > 0 && <section className="drawer-plan-group drawer-plan-group--unscheduled"><div className="drawer-plan-group__title"><b>{content === "timeline" ? "未配置时间" : "待安排"}</b><span>{selectedUnscheduled.length} 项 · {content === "timeline" ? "已完成但未记录实际时段" : "点击时间票券直接设置"}</span></div>{selectedUnscheduled.map((plan) => <CalendarDrawerPlan key={plan.id} plan={plan} mode={mode} readOnly={content === "timeline"} onEditPlan={onEditPlan} />)}</section>}{selectedTimed.length > 0 && <section className="drawer-plan-group"><div className="drawer-plan-group__title"><b>{mode === "month" ? "完成内容" : content === "timeline" ? "实际执行" : "已安排"}</b><span>{selectedTimed.length} 项{content === "schedule" ? " · 点击时间可再次修改" : ""}</span></div>{selectedTimed.map((plan) => <CalendarDrawerPlan key={plan.id} plan={plan} mode={mode} readOnly={content === "timeline"} onEditPlan={onEditPlan} />)}</section>}</> : <div className="mini-empty">{mode === "month" || content === "timeline" ? "这一天还没有完成记录。" : "这一天还没有计划。"}</div>}</div>}
+      {selectedDate !== null && <div className="agenda-drawer pixel-card"><div className="section-heading"><div><span className="eyebrow">{mode === "month" ? "DONE TODAY" : content === "timeline" ? "COMPLETION FACTS" : "DAY AGENDA"}</span><h2>{selectedDateLabel} · {mode === "month" || content === "timeline" ? "完成记录" : "计划口袋"}</h2></div><button className="modal-close" onClick={() => setSelectedDate(null)}>×</button></div>{selectedUnscheduled.length > 0 || selectedTimed.length > 0 ? <>{mode === "week" && selectedUnscheduled.length > 0 && <section className="drawer-plan-group drawer-plan-group--unscheduled"><div className="drawer-plan-group__title"><b>{content === "timeline" ? "未配置时间任务" : "待安排"}</b><span>{selectedUnscheduled.length} 项 · 点击时间票券直接设置</span></div>{selectedUnscheduled.map((plan) => <CalendarDrawerPlan key={plan.id} plan={plan} mode={mode} onEditPlan={onEditPlan} />)}</section>}{selectedTimed.length > 0 && <section className="drawer-plan-group"><div className="drawer-plan-group__title"><b>{mode === "month" ? "完成内容" : content === "timeline" ? "实际执行" : "已安排"}</b><span>{selectedTimed.length} 项{content === "schedule" ? " · 点击时间可再次修改" : ""}</span></div>{selectedTimed.map((plan) => <CalendarDrawerPlan key={plan.id} plan={plan} mode={mode} readOnly={content === "timeline"} onEditPlan={onEditPlan} />)}</section>}</> : <div className="mini-empty">{mode === "month" || content === "timeline" ? "这一天还没有完成记录。" : "这一天还没有计划。"}</div>}</div>}
     </div>
   );
 }
@@ -921,8 +948,7 @@ function GrowthView({ attributes, skillbooks, goals }: { attributes: Attribute[]
   );
 }
 
-function WeightView({ entries, target, onAdd, onTarget }: { entries: WeightEntry[]; target?: number; onAdd: (value: number) => void; onTarget: (value: number) => void }) {
-  const [value, setValue] = useState(entries.at(-1)?.value.toFixed(1) ?? "");
+function WeightView({ entries, target, onTarget }: { entries: WeightEntry[]; target?: number; onTarget: (value: number) => void }) {
   const [range, setRange] = useState<7 | 30 | 90 | 365>(30);
   const [page, setPage] = useState(1);
   const [targetValue, setTargetValue] = useState(target?.toFixed(1) ?? "");
@@ -937,10 +963,9 @@ function WeightView({ entries, target, onAdd, onTarget }: { entries: WeightEntry
   const history = [...entries].reverse();
   const pageCount = Math.max(1, Math.ceil(history.length / pageSize));
   const pageEntries = history.slice((page - 1) * pageSize, page * pageSize);
-  const submit = (event: FormEvent) => { event.preventDefault(); const parsed = Number(value); if (parsed >= 20 && parsed <= 300) onAdd(Math.round(parsed * 10) / 10); };
   return (
     <div className="view">
-      <div className="page-title"><div><span className="eyebrow">BODY TRACK</span><h1>体重趋势</h1><p>只记录事实与趋势，不提供健康判断。</p></div><form className="weight-form" onSubmit={submit}><label htmlFor="weight">今日体重</label><div><input id="weight" type="number" min="20" max="300" step="0.1" value={value} onChange={(event) => setValue(event.target.value)} /><span>kg</span></div><button className="pixel-button pixel-button--pink">保存记录</button></form></div>
+      <div className="page-title"><div><span className="eyebrow">BODY TRACK</span><h1>体重趋势</h1><p>只记录事实与趋势，不提供健康判断。</p></div></div>
       <div className="weight-overview"><article className="stat-card pixel-card"><span>最新体重</span><strong>{latest ? latest.value.toFixed(1) : "—"} <small>kg</small></strong><em>{latest && previous ? `较上次 ${(latest.value - previous.value).toFixed(1)} kg` : "暂无历史记录"}</em></article><article className="stat-card pixel-card"><span>7 日移动平均</span><strong>{averages.at(-1)?.toFixed(1) ?? "—"} <small>kg</small></strong><em>{entries.length > 1 ? `基于 ${Math.min(entries.length, 7)} 条有效记录` : "至少需要两条记录"}</em></article><article className="stat-card pixel-card"><span>目标体重</span><form className="target-weight-form" onSubmit={(event) => { event.preventDefault(); const parsed = Number(targetValue); if (parsed >= 20 && parsed <= 300) onTarget(parsed); }}><input aria-label="目标体重" type="number" min="20" max="300" step="0.1" value={targetValue} onChange={(event) => setTargetValue(event.target.value)} /><small>kg</small><button>保存</button></form><em>{target ? `目标线 ${target.toFixed(1)} kg` : "暂未设置目标"}</em></article></div>
       <section className="weight-detail pixel-card"><div className="section-heading"><div><span className="eyebrow">{range} DAYS</span><h2>每日值与移动平均</h2></div><div className="chart-range" aria-label="图表范围">{([7, 30, 90, 365] as const).map((valueOption) => <button className={range === valueOption ? "active" : ""} key={valueOption} onClick={() => setRange(valueOption)}>{valueOption === 365 ? "全部" : `${valueOption}日`}</button>)}</div></div><div className="chart-legend"><span><i className="raw" />每日值</span><span><i className="average" />7日均值</span><span><i className="target" />目标线</span>{rangeEntries.length > chartEntries.length && <em>{rangeEntries.length} 条记录已压缩为 {chartEntries.length} 个关键点</em>}</div><WeightChart entries={chartEntries} target={target} averageValues={chartAverages} /></section>
       <section className="pixel-card weight-history"><div className="section-heading section-heading--small"><div><span className="eyebrow">HISTORY</span><h2>历史记录</h2></div><span>共 {entries.length} 条 · 每页 50 条</span></div>{entries.length === 0 ? <div className="mini-empty">暂无体重记录</div> : <><div className="history-table">{pageEntries.map((entry, index) => <div key={entry.date}><span>{entry.date} · {entry.label}</span><b>{entry.value.toFixed(1)}</b><small>{page === 1 && index === 0 ? "当前有效值" : "已同步"}</small></div>)}</div><div className="pagination"><button disabled={page === 1} onClick={() => setPage((current) => Math.max(1, current - 1))}>← 上一页</button><span>第 {page} / {pageCount} 页</span><button disabled={page === pageCount} onClick={() => setPage((current) => Math.min(pageCount, current + 1))}>下一页 →</button></div></>}</section>
@@ -1400,13 +1425,13 @@ export default function Home() {
         <header className="topbar"><div className="mobile-brand">WEEK <b>UP!</b></div><div className="breadcrumb"><span>{activeNav.eyebrow}</span><b>{activeNav.label}</b></div><div className="top-actions"><button className="sync-status" onClick={() => void weekUp.syncLearningMore()} disabled={weekUp.syncing}><i />{weekUp.syncing ? "Learning MORE 同步中" : weekUp.state.learningMore.lastError ? "Learning MORE 暂时离线" : weekUp.state.learningMore.lastSyncedAt ? "Learning MORE 已同步" : "点击连接 Learning MORE"}</button><AiStatusControl config={weekUp.state.aiReview} status={weekUp.aiStatus} checking={weekUp.checkingAi} onConfigure={(value) => void weekUp.dispatch({ type: "ai-review.configure", ...value })} onRefresh={() => void weekUp.refreshAiStatus(true)} /><button className="icon-button" aria-label="设置" onClick={() => setSettingsOpen(true)}>⚙</button></div></header>
         <div className="page-wrap">
           {weekUp.persistenceStatus === "offline" && <section className="persistence-alert" role="alert"><b>本地服务暂时离线</b><span>当前展示的是最近缓存，修改操作不会生效。请重新启动 Week UP 服务后刷新页面。</span></section>}
-          {tab === "today" && <TodayView plans={plans} attributes={attributes} completionFacts={weekUp.state.completionFacts} weights={weights} onComplete={completePlan} onExternalComplete={completeLearningPlan} onQuickAdd={() => openQuickAdd()} onOpenWeight={() => setTab("weight")} onEdit={(id) => setPlanEditor(weekUp.state.plans.find((plan) => plan.id === id) ?? null)} onUndo={undoPlan} onRemove={(id) => void weekUp.dispatch({ type: "plan.remove", id })} onRescheduleOverdue={(id) => setOverdueEditor(weekUp.state.plans.find((plan) => plan.id === id) ?? null)} />}
+          {tab === "today" && <TodayView plans={plans} attributes={attributes} completionFacts={weekUp.state.completionFacts} weights={weights} onComplete={completePlan} onExternalComplete={completeLearningPlan} onQuickAdd={() => openQuickAdd()} onOpenWeight={() => setTab("weight")} onRecordWeight={addWeight} onEdit={(id) => setPlanEditor(weekUp.state.plans.find((plan) => plan.id === id) ?? null)} onUndo={undoPlan} onRemove={(id) => void weekUp.dispatch({ type: "plan.remove", id })} onRescheduleOverdue={(id) => setOverdueEditor(weekUp.state.plans.find((plan) => plan.id === id) ?? null)} />}
           {tab === "week" && <WeekDashboard attributes={attributes} plans={plans} planRecords={weekUp.state.plans.filter((plan) => plan.removedAt === undefined)} goals={weekUp.state.goals} dailySettlements={weekUp.state.dailySettlements} settlements={weekUp.state.settlements} initialRange={selectedWeekRange} generatingHarvestIds={weekUp.generatingHarvestIds} onRetryHarvest={(id) => void weekUp.dispatch({ type: "settlement.harvest.retry", id })} onNewGoal={() => setGoalEditor({ period: "week" })} onEditGoal={(goal) => setGoalEditor({ period: "week", initial: goal })} onQuickAdd={(goalIds) => openQuickAdd(undefined, goalIds)} onOpenCalendar={() => openCalendar("week")} onOpenGrowth={() => setTab("growth")} onComplete={completePlan} onEditPlan={(id) => setPlanEditor(weekUp.state.plans.find((plan) => plan.id === id) ?? null)} onUndoPlan={undoPlan} onRemovePlan={(id) => void weekUp.dispatch({ type: "plan.remove", id })} onRescheduleOverdue={(id) => setOverdueEditor(weekUp.state.plans.find((plan) => plan.id === id) ?? null)} />}
           {tab === "month" && <MonthDashboard attributes={attributes} plans={plans} planRecords={weekUp.state.plans.filter((plan) => plan.removedAt === undefined)} goals={weekUp.state.goals} projects={weekUp.state.projects} projectCategories={weekUp.state.projectCategories} settlements={weekUp.state.settlements} weights={weights} generatingHarvestIds={weekUp.generatingHarvestIds} onRetryHarvest={(id) => void weekUp.dispatch({ type: "settlement.harvest.retry", id })} onNewGoal={() => setGoalEditor({ period: "month" })} onEditGoal={(goal) => setGoalEditor({ period: "month", initial: goal })} onOpenWeek={(weekRange) => { setSelectedWeekRange(weekRange); setTab("week"); }} onOpenCalendar={() => openCalendar("month")} onOpenWeight={() => setTab("weight")} />}
-          {tab === "calendar" && <CalendarView plans={calendarContent === "timeline" ? weekUp.view.timelinePlans : plans} initialMode={calendarInitialMode} content={calendarContent} onEditPlan={(id) => setPlanEditor(weekUp.state.plans.find((plan) => plan.id === id) ?? null)} />}
+          {tab === "calendar" && <CalendarView plans={calendarContent === "timeline" ? weekUp.view.timelinePlans : plans} unconfiguredPlans={plans} untimedCompletionPlans={weekUp.view.timelinePlans} settledDates={weekUp.state.dailySettlements.map((settlement) => settlement.localDate)} initialMode={calendarInitialMode} content={calendarContent} onEditPlan={(id) => setPlanEditor(weekUp.state.plans.find((plan) => plan.id === id) ?? null)} />}
           {tab === "action-config" && <ActionConfigView attributes={attributes} attributeCategories={weekUp.state.attributeCategories} projectCategories={weekUp.state.projectCategories} projects={weekUp.state.projects.filter((project) => project.source === "week-up" && project.archivedAt === undefined)} courses={weekUp.state.learningMoreCourses} courseProjects={weekUp.state.projects.filter((project) => project.source === "learning-more" && project.archivedAt === undefined)} onNewAttribute={() => setAttributeEditor("new")} onEditAttribute={(attribute) => setAttributeEditor(weekUp.state.attributes.find((item) => item.id === attribute.id) ?? null)} onNewProject={() => setProjectEditor("new")} onEditProject={setProjectEditor} onConfigureCourse={setProjectEditor} onCreateCategory={(name) => { void weekUp.dispatch({ type: "attribute-category.create", name }); }} onRenameCategory={(id, name) => { void weekUp.dispatch({ type: "attribute-category.rename", id, name }); }} onDeleteCategory={(id) => { void weekUp.dispatch({ type: "attribute-category.delete", id }); }} onCreateProjectCategory={(name, color) => { void weekUp.dispatch({ type: "project-category.create", name, color }); }} onRenameProjectCategory={(id, name, color) => { void weekUp.dispatch({ type: "project-category.rename", id, name, color }); }} onDeleteProjectCategory={(id) => { void weekUp.dispatch({ type: "project-category.delete", id }); }} />}
           {tab === "growth" && <GrowthView attributes={weekUp.view.catalogAttributes} skillbooks={weekUp.state.skillbooks} goals={weekUp.state.goals} />}
-          {tab === "weight" && <WeightView entries={weights} target={weekUp.state.preferences.targetWeightKg} onAdd={addWeight} onTarget={(valueKg) => void weekUp.dispatch({ type: "weight.target", valueKg })} />}
+          {tab === "weight" && <WeightView entries={weights} target={weekUp.state.preferences.targetWeightKg} onTarget={(valueKg) => void weekUp.dispatch({ type: "weight.target", valueKg })} />}
         </div>
       </main>
       <nav className="mobile-nav" aria-label="移动端主导航">{NAV_ITEMS.map((item) => <button key={item.id} className={tab === item.id ? "active" : ""} onClick={() => navigateToTab(item.id)}><span>{item.icon}</span><small>{item.label}</small></button>)}</nav>
