@@ -213,6 +213,15 @@ test("keeps unscheduled plans outside time slots and uses one clickable time tic
   assert.match(css, /\.dashboard-action-list \{[^}]*grid-template-columns: repeat\(2,minmax\(0,1fr\)\)/);
 });
 
+test("shows untimed completion facts in the Timeline top area", async () => {
+  const page = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
+  assert.doesNotMatch(page, /\{content === "schedule" && <div className="unscheduled-dock">/);
+  assert.match(page, /content === "timeline" \? "未配置时间" : "待安排"/);
+  assert.match(page, /const countDescription = content === "timeline" \? "条完成记录未配置实际时间"/);
+  assert.match(page, /content === "timeline" \? "已完成但未记录实际时段"/);
+  assert.match(page, /readOnly=\{content === "timeline"\}/);
+});
+
 test("does not hide non-overlapping calendar plans behind a fixed-count overflow ticket", async () => {
   const page = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
   assert.doesNotMatch(page, /const visiblePlans = timedPlans\.slice\(0, 6\)/);

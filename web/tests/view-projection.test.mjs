@@ -75,3 +75,50 @@ test("keeps schedule projection separate from completed execution timeline", () 
     [{ calendarSourceId: completedPlanId, scheduledDate: "2026-07-28", start: "10:00", end: "11:00" }],
   );
 });
+
+test("keeps an untimed completion visible at the top of its completion day", () => {
+  let sequence = 0;
+  const context = {
+    now: () => "2026-07-28T12:00:00+08:00",
+    id: (prefix) => `${prefix}-${++sequence}`,
+  };
+  let state = createEmptyWeekUpState();
+  state = dispatchWeekUp(state, {
+    type: "plan.create",
+    value: {
+      title: "Completed without actual time",
+      detail: "",
+      category: "Work",
+      startAt: "2026-07-29T17:00:00+08:00",
+      endAt: "2026-07-29T19:00:00+08:00",
+      goalIds: [],
+      rewards: [],
+    },
+  }, context).state;
+  const planId = state.plans[0].id;
+  state = dispatchWeekUp(state, {
+    type: "plan.complete",
+    id: planId,
+    completedAt: "2026-07-28T11:00:00+08:00",
+  }, context).state;
+
+  const view = projectWeekUpView(state, new Date("2026-07-28T12:00:00+08:00"));
+  assert.deepEqual(
+    view.timelinePlans.map(({ calendarSourceId, scheduledDate, start, end, timeStatus, completed }) => ({
+      calendarSourceId,
+      scheduledDate,
+      start,
+      end,
+      timeStatus,
+      completed,
+    })),
+    [{
+      calendarSourceId: planId,
+      scheduledDate: "2026-07-28",
+      start: "时间未配置",
+      end: "",
+      timeStatus: "unscheduled",
+      completed: true,
+    }],
+  );
+});
