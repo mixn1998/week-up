@@ -818,6 +818,40 @@ test("round-trips a versioned backup", () => {
   assert.throws(() => migrateWeekUpState({ schemaVersion: 99 }), /database_schema_unsupported/);
 });
 
+test("folds legacy execution records into their completion fact", () => {
+  const h = harness();
+  let state = addAttribute(h, createEmptyWeekUpState());
+  state = addPlan(h, state, state.attributes[0].id);
+  const planId = state.plans[0].id;
+  state = h.run(state, {
+    type: "plan.complete",
+    id: planId,
+    completedAt: "2026-07-20T10:00:00+08:00",
+  });
+  const fact = state.completionFacts[0];
+  const { executionRecords: _removedExecutionRecords, ...currentWithoutExecutions } = state;
+  const migrated = migrateWeekUpState({
+    ...currentWithoutExecutions,
+    schemaVersion: 16,
+    completionFacts: [{ ...fact, actualSegments: undefined }],
+    executionRecords: [{
+      id: "legacy-execution",
+      planId,
+      startAt: "2026-07-20T09:10:00+08:00",
+      endAt: "2026-07-20T09:55:00+08:00",
+      source: "week-up",
+      recordedAt: fact.completedAt,
+      completionFactId: fact.id,
+    }],
+  });
+
+  assert.deepEqual(migrated.completionFacts[0].actualSegments, [{
+    startAt: "2026-07-20T09:10:00+08:00",
+    endAt: "2026-07-20T09:55:00+08:00",
+  }]);
+  assert.equal("executionRecords" in migrated, false);
+});
+
 test("migrates legacy Learning MORE clock times back to time-unconfigured", () => {
   const h = harness();
   let state = addAttribute(h, createEmptyWeekUpState());
@@ -857,8 +891,8 @@ test("imports Learning MORE course tables and facts while Week UP owns schedule 
   assert.equal(state.plans[0].endAt, "2026-07-20T10:00:00+08:00");
   assert.equal(state.plans[0].timeStatus, "scheduled");
   assert.deepEqual(
-    state.executionRecords.map(({ startAt, endAt, source }) => ({ startAt, endAt, source })),
-    [{ startAt: "2026-07-20T02:12:00Z", endAt: "2026-07-20T03:47:00Z", source: "learning-more" }],
+    state.completionFacts[0].actualSegments,
+    [{ startAt: "2026-07-20T02:12:00Z", endAt: "2026-07-20T03:47:00Z" }],
   );
   assert.equal(state.plans[0].title, "概率论：条件概率");
   assert.equal(state.plans[0].rewards[0].amount, 3);
@@ -906,7 +940,7 @@ test("keeps a directly completed overdue Learning MORE lesson on its original sc
   assert.equal(state.plans[0].timeStatus, "unscheduled");
   assert.deepEqual(state.plans[0].timeSegments ?? [], []);
   assert.equal(state.completionFacts[0].completedAt, completion.occurredAt);
-  assert.deepEqual(state.executionRecords, []);
+  assert.deepEqual(state.completionFacts[0].actualSegments, []);
   assert.equal(totalXpForAttribute(state, attributeId), 2);
 
   state = h.run(state, { type: "learning-more.import", facts: [completion] });
@@ -1208,12 +1242,10 @@ test("keeps a future schedule in place when an ordinary plan is completed early"
   assert.equal(state.plans[0].endAt, "2026-07-21T19:00:00+08:00");
   assert.equal(state.completionFacts[0].completedAt, "2026-07-20T16:00:00+08:00");
   assert.deepEqual(
-    state.executionRecords.map(({ planId: id, startAt, endAt, source }) => ({ id, startAt, endAt, source })),
+    state.completionFacts[0].actualSegments,
     [{
-      id: planId,
       startAt: "2026-07-20T15:00:00+08:00",
       endAt: "2026-07-20T16:00:00+08:00",
-      source: "week-up",
     }],
   );
 
@@ -1263,17 +1295,15 @@ test("records Learning MORE actual time without moving its original schedule", (
   assert.equal(state.completionFacts[0].planId, planId);
   assert.equal(state.completionFacts[0].completedAt, "2026-07-20T16:00:00+08:00");
   assert.deepEqual(
-    state.executionRecords.map(({ planId: id, startAt, endAt, source }) => ({ id, startAt, endAt, source })),
+    state.completionFacts[0].actualSegments,
     [{
-      id: planId,
       startAt: "2026-07-20T15:10:00+08:00",
       endAt: "2026-07-20T16:00:00+08:00",
-      source: "learning-more",
     }],
   );
 });
 
-test("undoing one completed segment preserves other actual execution records", () => {
+test("undoing one completed segment preserves other segment actual time", () => {
   const h = harness();
   let state = addAttribute(h, createEmptyWeekUpState());
   state = addPlan(h, state, state.attributes[0].id, {
@@ -1297,10 +1327,18 @@ test("undoing one completed segment preserves other actual execution records", (
     completedAt: "2026-07-20T15:25:00+08:00",
     actualSegment: { startAt: "2026-07-20T15:05:00+08:00", endAt: "2026-07-20T15:25:00+08:00" },
   });
+  assert.deepEqual(state.completionFacts[0].actualSegments, [
+    { startAt: "2026-07-20T09:05:00+08:00", endAt: "2026-07-20T09:20:00+08:00" },
+    { startAt: "2026-07-20T15:05:00+08:00", endAt: "2026-07-20T15:25:00+08:00" },
+  ]);
   state = h.run(state, { type: "plan.segment.undo", id: planId, segmentId: "first" });
 
-  assert.equal(state.executionRecords.find((record) => record.planSegmentId === "first").revertedAt !== undefined, true);
-  assert.equal(state.executionRecords.find((record) => record.planSegmentId === "second").revertedAt, undefined);
+  const first = state.plans[0].timeSegments.find((segment) => segment.id === "first");
+  const second = state.plans[0].timeSegments.find((segment) => segment.id === "second");
+  assert.equal(first.actualStartAt, undefined);
+  assert.equal(first.actualEndAt, undefined);
+  assert.equal(second.actualStartAt, "2026-07-20T15:05:00+08:00");
+  assert.equal(second.actualEndAt, "2026-07-20T15:25:00+08:00");
 });
 
 test("serializes load, dispatch, refresh, and replace through one store queue", async () => {

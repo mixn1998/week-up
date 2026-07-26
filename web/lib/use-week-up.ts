@@ -129,12 +129,11 @@ export function projectWeekUpView(state: WeekUpState, at = new Date()): WeekUpVi
   };
   });
   const activePlans = new Map(state.plans.filter((item) => item.removedAt === undefined).map((item) => [item.id, item]));
-  const timelinePlans: PlanItem[] = state.executionRecords
-    .filter((record) => record.revertedAt === undefined)
-    .flatMap((record): PlanItem[] => {
-      const item = activePlans.get(record.planId);
-      const fact = activeFacts.get(record.planId);
-      if (!item || !fact) return [];
+  const timelinePlans: PlanItem[] = state.completionFacts
+    .filter((fact) => fact.revertedAt === undefined)
+    .flatMap((fact): PlanItem[] => {
+      const item = activePlans.get(fact.planId);
+      if (!item) return [];
       const currentProject = item.projectId
         ? state.projects.find((project) => project.id === item.projectId)
         : item.sourceCourseId
@@ -142,22 +141,25 @@ export function projectWeekUpView(state: WeekUpState, at = new Date()): WeekUpVi
           : undefined;
       const category = currentProject?.category ?? item.category;
       const categoryColor = colorForCategory(category, state.projectCategories.find((entry) => entry.name === category)?.color);
-      return [{
-        id: record.id,
+      const segments = fact.actualSegments.length > 0 ? fact.actualSegments : [undefined];
+      return segments.map((segment, index): PlanItem => {
+        const anchor = segment?.startAt ?? fact.completedAt;
+        return {
+        id: segment ? `${fact.id}:actual:${index}` : fact.id,
         calendarSourceId: item.id,
         ...(item.projectId ? { projectId: item.projectId } : {}),
-        scheduledDate: dateInShanghai(record.startAt),
+        scheduledDate: dateInShanghai(anchor),
         title: item.title,
         detail: item.detail,
-        start: timeInShanghai(record.startAt),
-        end: timeInShanghai(record.endAt),
-        timeSegments: [{
-          id: record.planSegmentId ?? record.id,
-          start: timeInShanghai(record.startAt),
-          end: timeInShanghai(record.endAt),
+        start: segment ? timeInShanghai(segment.startAt) : "时间未配置",
+        end: segment ? timeInShanghai(segment.endAt) : "",
+        timeSegments: segment ? [{
+          id: `${fact.id}:actual:${index}`,
+          start: timeInShanghai(segment.startAt),
+          end: timeInShanghai(segment.endAt),
           completed: true,
-        }],
-        timeStatus: "scheduled",
+        }] : [],
+        timeStatus: segment ? "scheduled" : "unscheduled",
         category,
         categoryColor,
         categoryTextColor: readableTextColor(categoryColor),
@@ -167,9 +169,9 @@ export function projectWeekUpView(state: WeekUpState, at = new Date()): WeekUpVi
         completedEarly: completedBeforeSchedule(fact.completedAt, item),
         rewards: item.rewards.map((reward) => ({ ...reward })),
         source: item.source,
-        executionSource: record.source,
+        executionSource: fact.source,
         syncState: "completed",
-        dayIndex: dayIndexFor(record.startAt),
+        dayIndex: dayIndexFor(anchor),
         scheduleGroup: "completed",
         rewardMode: item.rewardMode,
         templateLabel: item.projectId
@@ -180,7 +182,8 @@ export function projectWeekUpView(state: WeekUpState, at = new Date()): WeekUpVi
         unitLabel: item.unitKind && item.unitQuantity !== undefined
           ? `${item.unitQuantity} ${item.unitKind === "hour" ? "时" : item.unitKind === "lesson" ? "节" : "次"}`
           : undefined,
-      }];
+        };
+      });
     })
     .sort((left, right) =>
       (left.scheduledDate ?? "").localeCompare(right.scheduledDate ?? "")

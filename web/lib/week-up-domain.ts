@@ -2,7 +2,7 @@ import { colorIdForCategory, isCategoryColorId } from "./category-palette.ts";
 
 import { canRescheduleInsideWeekUp, participatesInOverdueQueue } from "./overdue-policy.ts";
 
-export const WEEK_UP_SCHEMA_VERSION = 16 as const;
+export const WEEK_UP_SCHEMA_VERSION = 17 as const;
 
 export type AiProviderId = "codex-cli" | "api";
 
@@ -13,6 +13,8 @@ export type PlanTimeSegment = Readonly<{
   startAt: string;
   endAt: string;
   completedAt?: string;
+  actualStartAt?: string;
+  actualEndAt?: string;
 }>;
 export type PlanTimeSegmentInput = Readonly<{ startAt: string; endAt: string }>;
 
@@ -121,19 +123,8 @@ export type CompletionFact = Readonly<{
   completedAt: string;
   source: "week-up" | "learning-more";
   externalFactId?: string;
+  actualSegments: readonly PlanTimeSegmentInput[];
   rewardSnapshot: readonly AttributeReward[];
-  revertedAt?: string;
-}>;
-
-export type ExecutionRecord = Readonly<{
-  id: string;
-  planId: string;
-  planSegmentId?: string;
-  startAt: string;
-  endAt: string;
-  source: "week-up" | "learning-more";
-  recordedAt: string;
-  completionFactId?: string;
   revertedAt?: string;
 }>;
 
@@ -219,7 +210,6 @@ export type WeekUpState = Readonly<{
   goals: readonly GoalRecord[];
   plans: readonly PlanRecord[];
   completionFacts: readonly CompletionFact[];
-  executionRecords: readonly ExecutionRecord[];
   xpTransactions: readonly XpTransaction[];
   weightRevisions: readonly WeightRevision[];
   dailySettlements: readonly DailySettlementRecord[];
@@ -327,7 +317,6 @@ export function createEmptyWeekUpState(baseUrl = "/learning-more-api"): WeekUpSt
     goals: [],
     plans: [],
     completionFacts: [],
-    executionRecords: [],
     xpTransactions: [],
     weightRevisions: [],
     dailySettlements: [],
@@ -658,46 +647,17 @@ function completePlan(
   if (options.source === "week-up" && planIsOverdue(plan, options.completedAt)) throw new Error("plan_overdue");
   const duplicateExternal = options.externalFactId && state.completionFacts.find((fact) => fact.externalFactId === options.externalFactId && fact.revertedAt === undefined);
   if (duplicateExternal) {
-    const executionRecords = appendExecutionRecords(
-      state.executionRecords,
-      planId,
-      options.source,
-      options.actualSegments,
-      context,
-      options.completedAt,
-      duplicateExternal.id,
-    );
-    return executionRecords === state.executionRecords
+    const updated = mergeCompletionFactDetails(duplicateExternal, options);
+    return updated === duplicateExternal
       ? unchanged(state, duplicateExternal.id)
-      : changed(state, { executionRecords }, duplicateExternal.id);
+      : changed(state, { completionFacts: state.completionFacts.map((fact) => fact.id === updated.id ? updated : fact) }, duplicateExternal.id);
   }
   const existing = activeCompletion(state, planId);
   if (existing) {
-    if (options.source === "learning-more" && existing.source === "week-up" && options.externalFactId) {
-      const facts = state.completionFacts.map((fact) => fact.id === existing.id ? { ...fact, externalFactId: options.externalFactId } : fact);
-      const executionRecords = appendExecutionRecords(
-        state.executionRecords,
-        planId,
-        options.source,
-        options.actualSegments,
-        context,
-        options.completedAt,
-        existing.id,
-      );
-      return changed(state, { completionFacts: facts, executionRecords }, existing.id);
-    }
-    const executionRecords = appendExecutionRecords(
-      state.executionRecords,
-      planId,
-      options.source,
-      options.actualSegments,
-      context,
-      options.completedAt,
-      existing.id,
-    );
-    return executionRecords === state.executionRecords
+    const updated = mergeCompletionFactDetails(existing, options);
+    return updated === existing
       ? unchanged(state, existing.id)
-      : changed(state, { executionRecords }, existing.id);
+      : changed(state, { completionFacts: state.completionFacts.map((fact) => fact.id === updated.id ? updated : fact) }, existing.id);
   }
   const factId = context.id("completion");
   const rewardSnapshot = plan.rewards.map((reward) => ({ ...reward }));
@@ -707,6 +667,7 @@ function completePlan(
     completedAt: options.completedAt,
     source: options.source,
     ...(options.externalFactId ? { externalFactId: options.externalFactId } : {}),
+    actualSegments: normalizeActualSegments(options.actualSegments),
     rewardSnapshot,
   };
   const transactions = rewardSnapshot.map<XpTransaction>((reward) => ({
@@ -719,57 +680,32 @@ function completePlan(
   }));
   return changed(state, {
     completionFacts: [...state.completionFacts, fact],
-    executionRecords: appendExecutionRecords(
-      state.executionRecords,
-      planId,
-      options.source,
-      options.actualSegments,
-      context,
-      options.completedAt,
-      factId,
-    ),
     xpTransactions: [...state.xpTransactions, ...transactions],
   }, factId);
 }
 
-function appendExecutionRecords(
-  current: readonly ExecutionRecord[],
-  planId: string,
-  source: ExecutionRecord["source"],
-  segments: readonly PlanTimeSegmentInput[] | undefined,
-  context: DomainContext,
-  recordedAt: string,
-  completionFactId?: string,
-  planSegmentId?: string,
-): readonly ExecutionRecord[] {
-  if (!segments?.length) return current;
-  const normalized = segments
-    .map((segment) => {
-      assertPeriod(segment.startAt, segment.endAt);
-      return segment;
-    })
-    .sort((left, right) => left.startAt.localeCompare(right.startAt));
-  const additions = normalized.flatMap((segment): ExecutionRecord[] => {
-    const duplicate = current.some((record) =>
-      record.revertedAt === undefined
-      && record.planId === planId
-      && record.planSegmentId === planSegmentId
-      && record.startAt === segment.startAt
-      && record.endAt === segment.endAt
-    );
-    if (duplicate) return [];
-    return [{
-      id: context.id("execution"),
-      planId,
-      ...(planSegmentId ? { planSegmentId } : {}),
-      startAt: segment.startAt,
-      endAt: segment.endAt,
-      source,
-      recordedAt,
-      ...(completionFactId ? { completionFactId } : {}),
-    }];
-  });
-  return additions.length ? [...current, ...additions] : current;
+function normalizeActualSegments(segments: readonly PlanTimeSegmentInput[] | undefined): readonly PlanTimeSegmentInput[] {
+  if (!segments?.length) return [];
+  const unique = new Map<string, PlanTimeSegmentInput>();
+  for (const segment of segments) {
+    assertPeriod(segment.startAt, segment.endAt);
+    unique.set(`${segment.startAt}\u0000${segment.endAt}`, { startAt: segment.startAt, endAt: segment.endAt });
+  }
+  return [...unique.values()].sort((left, right) => left.startAt.localeCompare(right.startAt) || left.endAt.localeCompare(right.endAt));
+}
+
+function mergeCompletionFactDetails(
+  fact: CompletionFact,
+  options: { externalFactId?: string; actualSegments?: readonly PlanTimeSegmentInput[] },
+): CompletionFact {
+  const actualSegments = normalizeActualSegments([...(fact.actualSegments ?? []), ...(options.actualSegments ?? [])]);
+  const externalFactId = fact.externalFactId ?? options.externalFactId;
+  if (externalFactId === fact.externalFactId && JSON.stringify(actualSegments) === JSON.stringify(fact.actualSegments)) return fact;
+  return {
+    ...fact,
+    ...(externalFactId ? { externalFactId } : {}),
+    actualSegments,
+  };
 }
 
 function revertPlanCompletionInState(state: WeekUpState, planId: string, context: DomainContext, now: string): WeekUpState {
@@ -786,7 +722,6 @@ function revertPlanCompletionInState(state: WeekUpState, planId: string, context
   return {
     ...state,
     completionFacts: state.completionFacts.map((item) => item.id === fact.id ? { ...item, revertedAt: now } : item),
-    executionRecords: state.executionRecords.map((item) => item.planId === planId && item.revertedAt === undefined ? { ...item, revertedAt: now } : item),
     xpTransactions: [...state.xpTransactions, ...compensation],
   };
 }
@@ -1462,7 +1397,6 @@ export function dispatchWeekUp(state: WeekUpState, command: WeekUpCommand, conte
       return changed(state, {
         plans: reverted.plans.map((plan) => plan.id === command.id && plan.timeSegments?.length ? { ...plan, timeSegments: plan.timeSegments.map((segment) => ({ id: segment.id, startAt: segment.startAt, endAt: segment.endAt })), updatedAt: now } : plan),
         completionFacts: reverted.completionFacts,
-        executionRecords: reverted.executionRecords,
         xpTransactions: reverted.xpTransactions,
       }, fact.id);
     }
@@ -1475,25 +1409,35 @@ export function dispatchWeekUp(state: WeekUpState, command: WeekUpCommand, conte
       if (!segments.some((segment) => segment.id === command.segmentId)) throw new Error("plan_segment_not_found");
       if (segments.find((segment) => segment.id === command.segmentId)?.completedAt) return unchanged(state, command.segmentId);
       const completedAt = command.completedAt ?? now;
-      const updatedPlan: PlanRecord = { ...plan, timeSegments: segments.map((segment) => segment.id === command.segmentId ? { ...segment, completedAt } : segment), updatedAt: now };
-      const executionRecords = appendExecutionRecords(
-        state.executionRecords,
-        plan.id,
-        "week-up",
-        command.actualSegment ? [command.actualSegment] : undefined,
-        context,
-        completedAt,
-        undefined,
-        command.segmentId,
-      );
-      const prepared = { ...state, plans: state.plans.map((item) => item.id === plan.id ? updatedPlan : item), executionRecords };
+      if (command.actualSegment) assertPeriod(command.actualSegment.startAt, command.actualSegment.endAt);
+      const updatedPlan: PlanRecord = {
+        ...plan,
+        timeSegments: segments.map((segment) => segment.id === command.segmentId
+          ? {
+              ...segment,
+              completedAt,
+              ...(command.actualSegment ? {
+                actualStartAt: command.actualSegment.startAt,
+                actualEndAt: command.actualSegment.endAt,
+              } : {}),
+            }
+          : segment),
+        updatedAt: now,
+      };
+      const prepared = { ...state, plans: state.plans.map((item) => item.id === plan.id ? updatedPlan : item) };
       if (!allSegmentsCompleted(updatedPlan)) {
-        return changed(state, {
-          plans: prepared.plans,
-          executionRecords: prepared.executionRecords,
-        }, command.segmentId);
+        return changed(state, { plans: prepared.plans }, command.segmentId);
       }
-      const outcome = completePlan(prepared, plan.id, context, { source: "week-up", completedAt });
+      const actualSegments = (updatedPlan.timeSegments ?? []).flatMap((segment): PlanTimeSegmentInput[] =>
+        segment.actualStartAt && segment.actualEndAt
+          ? [{ startAt: segment.actualStartAt, endAt: segment.actualEndAt }]
+          : []
+      );
+      const outcome = completePlan(prepared, plan.id, context, {
+        source: "week-up",
+        completedAt,
+        ...(actualSegments.length ? { actualSegments } : {}),
+      });
       const refreshed = refreshSettlementsAfterFactChanges(outcome.state, now);
       return refreshed === outcome.state ? outcome : { ...outcome, state: refreshed };
     }
@@ -1505,13 +1449,8 @@ export function dispatchWeekUp(state: WeekUpState, command: WeekUpCommand, conte
       if (!segment.completedAt) return unchanged(state, command.segmentId);
       const reverted = revertPlanCompletionInState(state, plan.id, context, now);
       const plans = reverted.plans.map((item) => item.id === plan.id ? { ...item, timeSegments: item.timeSegments?.map((entry) => entry.id === command.segmentId ? { id: entry.id, startAt: entry.startAt, endAt: entry.endAt } : entry), updatedAt: now } : item);
-      const executionRecords = state.executionRecords.map((record) =>
-        record.planId === plan.id && record.planSegmentId === command.segmentId && record.revertedAt === undefined
-          ? { ...record, revertedAt: now }
-          : record
-      );
-      const refreshed = refreshSettlementsAfterFactChanges({ ...reverted, plans, executionRecords }, now);
-      return changed(state, { plans: refreshed.plans, completionFacts: refreshed.completionFacts, executionRecords: refreshed.executionRecords, xpTransactions: refreshed.xpTransactions, settlements: refreshed.settlements }, command.segmentId);
+      const refreshed = refreshSettlementsAfterFactChanges({ ...reverted, plans }, now);
+      return changed(state, { plans: refreshed.plans, completionFacts: refreshed.completionFacts, xpTransactions: refreshed.xpTransactions, settlements: refreshed.settlements }, command.segmentId);
     }
     case "plan.follow-template": {
       const plan = state.plans.find((item) => item.id === command.id && item.removedAt === undefined);
@@ -1884,35 +1823,82 @@ export function migrateWeekUpState(value: unknown): WeekUpState {
   if (value === undefined || value === null) return createEmptyWeekUpState();
   if (typeof value !== "object") throw new Error("database_state_invalid");
   const version = (value as { schemaVersion?: unknown }).schemaVersion;
-  if (version !== 1 && version !== 2 && version !== 3 && version !== 4 && version !== 5 && version !== 6 && version !== 7 && version !== 8 && version !== 9 && version !== 10 && version !== 11 && version !== 12 && version !== 13 && version !== 14 && version !== 15 && version !== WEEK_UP_SCHEMA_VERSION) throw new Error("database_schema_unsupported");
+  if (version !== 1 && version !== 2 && version !== 3 && version !== 4 && version !== 5 && version !== 6 && version !== 7 && version !== 8 && version !== 9 && version !== 10 && version !== 11 && version !== 12 && version !== 13 && version !== 14 && version !== 15 && version !== 16 && version !== WEEK_UP_SCHEMA_VERSION) throw new Error("database_schema_unsupported");
   type MigratableSettlement = Omit<SettlementRecord, "harvest"> & {
     harvest?: SettlementRecord["harvest"];
     reflection?: string;
   };
   type MigratableCategory = Omit<AttributeCategoryRecord, "color"> & { color?: string };
-  const raw = value as Omit<WeekUpState, "schemaVersion" | "attributeCategories" | "projectCategories" | "plans" | "projects" | "learningMoreCourses" | "learningMoreLessons" | "executionRecords" | "dailySettlements" | "settlements" | "aiReview"> & {
-    schemaVersion: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 16;
+  type MigratableCompletionFact = Omit<CompletionFact, "actualSegments"> & { actualSegments?: readonly PlanTimeSegmentInput[] };
+  type LegacyExecutionRecord = Readonly<{
+    id: string;
+    planId: string;
+    planSegmentId?: string;
+    startAt: string;
+    endAt: string;
+    source: "week-up" | "learning-more";
+    recordedAt: string;
+    completionFactId?: string;
+    revertedAt?: string;
+  }>;
+  const raw = value as Omit<WeekUpState, "schemaVersion" | "attributeCategories" | "projectCategories" | "plans" | "projects" | "learningMoreCourses" | "learningMoreLessons" | "completionFacts" | "dailySettlements" | "settlements" | "aiReview"> & {
+    schemaVersion: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 17;
     attributeCategories?: readonly MigratableCategory[];
     projectCategories?: readonly MigratableCategory[];
     plans: readonly (Omit<PlanRecord, "rewardMode"> & Partial<Pick<PlanRecord, "rewardMode">>)[];
+    completionFacts: readonly MigratableCompletionFact[];
     projects?: readonly ProjectRecord[];
     learningMoreCourses?: readonly LearningMoreCourse[];
     learningMoreLessons?: readonly (Omit<LearningMoreLesson, "scheduleItemId" | "scheduledDate"> & Partial<Pick<LearningMoreLesson, "scheduleItemId" | "scheduledDate">>)[];
-    executionRecords?: readonly ExecutionRecord[];
+    executionRecords?: readonly LegacyExecutionRecord[];
     settlements: readonly MigratableSettlement[];
     aiReview?: Partial<AiReviewState> & { baseUrl: string };
     preferences?: WeekUpState["preferences"];
   };
+  const legacyExecutionRecords = raw.executionRecords ?? [];
+  const activeFactCountByPlan = raw.completionFacts.reduce<Map<string, number>>((counts, fact) => {
+    if (fact.revertedAt === undefined) counts.set(fact.planId, (counts.get(fact.planId) ?? 0) + 1);
+    return counts;
+  }, new Map());
+  const completionFacts: CompletionFact[] = raw.completionFacts.map((fact) => {
+    const legacySegments = legacyExecutionRecords
+      .filter((record) =>
+        record.revertedAt === undefined
+        && (
+          record.completionFactId === fact.id
+          || (
+            record.completionFactId === undefined
+            && record.planId === fact.planId
+            && activeFactCountByPlan.get(fact.planId) === 1
+          )
+        )
+      )
+      .map(({ startAt, endAt }) => ({ startAt, endAt }));
+    return {
+      ...fact,
+      actualSegments: normalizeActualSegments(fact.actualSegments ?? legacySegments),
+    };
+  });
   const plans: PlanRecord[] = raw.plans.map((plan) => {
-    const activeFact = raw.completionFacts.find((fact) => fact.planId === plan.id && fact.revertedAt === undefined);
+    const activeFact = completionFacts.find((fact) => fact.planId === plan.id && fact.revertedAt === undefined);
     const isCompleted = activeFact !== undefined;
     const legacyExternalSchedule = raw.schemaVersion < 4 && plan.source === "learning-more" && !plan.sourceRef?.startsWith("week-up:");
     const migratedTimeStatus = raw.schemaVersion < 6 && plan.source === "learning-more" && !isCompleted && plan.removedAt === undefined ? "unscheduled" as const : plan.timeStatus;
-    const timeSegments = plan.timeSegments?.length
+    const baseTimeSegments = plan.timeSegments?.length
       ? plan.timeSegments
       : migratedTimeStatus === "unscheduled"
         ? []
         : [{ id: `${plan.id}:segment:0`, startAt: plan.startAt, endAt: plan.endAt, ...(activeFact ? { completedAt: activeFact.completedAt } : {}) }];
+    const timeSegments = baseTimeSegments.map((segment) => {
+      const legacyExecution = legacyExecutionRecords.find((record) =>
+        record.revertedAt === undefined
+        && record.planId === plan.id
+        && record.planSegmentId === segment.id
+      );
+      return legacyExecution
+        ? { ...segment, actualStartAt: legacyExecution.startAt, actualEndAt: legacyExecution.endAt }
+        : segment;
+    });
     return {
       ...plan,
       timeSegments,
@@ -1961,8 +1947,9 @@ export function migrateWeekUpState(value: unknown): WeekUpState {
     });
     return categories;
   }, []);
+  const { executionRecords: _legacyExecutionRecords, completionFacts: _legacyCompletionFacts, ...rawState } = raw;
   return {
-    ...raw,
+    ...rawState,
     schemaVersion: WEEK_UP_SCHEMA_VERSION,
     attributeCategories,
     projectCategories,
@@ -1976,7 +1963,7 @@ export function migrateWeekUpState(value: unknown): WeekUpState {
     }),
     learningMoreCourses: raw.schemaVersion < 5 ? [] : raw.learningMoreCourses ?? [],
     learningMoreLessons: raw.schemaVersion < 5 ? [] : (raw.learningMoreLessons ?? []).map((lesson, index) => ({ ...lesson, scheduleItemId: lesson.scheduleItemId!, scheduledDate: lesson.scheduledDate!, order: lesson.order ?? index })),
-    executionRecords: raw.executionRecords ?? [],
+    completionFacts,
     dailySettlements: "dailySettlements" in raw && Array.isArray(raw.dailySettlements) ? raw.dailySettlements : [],
     settlements: (raw.settlements ?? []).map(({ reflection: _legacyReflection, ...settlement }) => ({
       ...settlement,
