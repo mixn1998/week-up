@@ -1787,9 +1787,27 @@ export function dispatchWeekUp(state: WeekUpState, command: WeekUpCommand, conte
           Date.parse(actualEnd) > Date.parse(actualStart);
         next = {
           ...next,
-          plans: next.plans.map((item) => item.id === plan.id && item.timeSegments?.length
-            ? { ...item, timeSegments: item.timeSegments.map((segment) => ({ ...segment, completedAt: segment.completedAt ?? fact.occurredAt })), updatedAt: now }
-            : item),
+          plans: next.plans.map((item): PlanRecord => {
+            if (item.id !== plan.id) return item;
+            if (hasActualRange) {
+              return {
+                ...item,
+                startAt: actualStart,
+                endAt: actualEnd,
+                timeStatus: "scheduled",
+                timeSegments: [{
+                  id: item.timeSegments?.[0]?.id ?? context.id("segment"),
+                  startAt: actualStart,
+                  endAt: actualEnd,
+                  completedAt: fact.occurredAt,
+                }],
+                updatedAt: now,
+              };
+            }
+            return item.timeSegments?.length
+              ? { ...item, timeSegments: item.timeSegments.map((segment) => ({ ...segment, completedAt: segment.completedAt ?? fact.occurredAt })), updatedAt: now }
+              : item;
+          }),
         };
         const duplicateExternal = fact.factId
           ? next.completionFacts.find((item) => item.externalFactId === fact.factId && item.revertedAt === undefined)
@@ -1939,13 +1957,31 @@ export function migrateWeekUpState(value: unknown): WeekUpState {
         ? { ...segment, actualStartAt: legacyExecution.startAt, actualEndAt: legacyExecution.endAt }
         : segment;
     });
+    const learningMoreActualSegments = plan.source === "learning-more"
+      && activeFact?.actualSegments.length
+      && activeFact.actualSegments.every((segment) =>
+        localDate(segment.startAt) === localDate(activeFact.actualSegments[0]!.startAt)
+        && localDate(segment.endAt) === localDate(activeFact.actualSegments[0]!.startAt))
+      ? activeFact.actualSegments
+      : undefined;
+    const synchronizedTimeSegments = learningMoreActualSegments?.map((segment, index): PlanTimeSegment => ({
+      id: plan.timeSegments?.[index]?.id ?? `${plan.id}:segment:${index}`,
+      startAt: segment.startAt,
+      endAt: segment.endAt,
+      completedAt: activeFact!.completedAt,
+    }));
     return {
       ...plan,
-      timeSegments,
+      ...(synchronizedTimeSegments?.length ? {
+        startAt: synchronizedTimeSegments[0]!.startAt,
+        endAt: synchronizedTimeSegments.at(-1)!.endAt,
+        timeStatus: "scheduled" as const,
+        timeSegments: synchronizedTimeSegments,
+      } : { timeSegments }),
       rewardMode: plan.rewardMode ?? (plan.rewards.length > 0 ? "custom" : "none"),
       titleMode: plan.titleMode ?? "custom",
       ...(plan.source === "learning-more" ? { templateKind: plan.templateKind ?? "course", unitKind: plan.unitKind ?? "lesson", unitQuantity: plan.unitQuantity ?? 1 } : {}),
-      ...(migratedTimeStatus ? { timeStatus: migratedTimeStatus } : {}),
+      ...(!synchronizedTimeSegments?.length && migratedTimeStatus ? { timeStatus: migratedTimeStatus } : {}),
       ...(legacyExternalSchedule && !isCompleted && plan.removedAt === undefined ? { removedAt: plan.updatedAt } : {}),
     };
   });

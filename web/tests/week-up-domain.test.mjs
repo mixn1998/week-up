@@ -986,7 +986,7 @@ test("migrates legacy Learning MORE clock times back to time-unconfigured", () =
   assert.equal(migrated.plans[0].timeStatus, "unscheduled");
 });
 
-test("imports Learning MORE course tables and facts while Week UP owns schedule time", () => {
+test("imports Learning MORE course tables and replaces configured time with authoritative completion time", () => {
   const h = harness();
   let state = addAttribute(h, createEmptyWeekUpState());
   const lessons = [{
@@ -1007,8 +1007,8 @@ test("imports Learning MORE course tables and facts while Week UP owns schedule 
   ];
   const updatedLessons = [{ ...lessons[0], title: "概率论：条件概率" }];
   state = h.run(state, { type: "learning-more.import", courses: [{ courseId: "course-1", title: "概率论", status: "closed" }], lessons: updatedLessons, facts, nextCursor: "cursor-2" });
-  assert.equal(state.plans[0].startAt, "2026-07-20T09:00:00+08:00");
-  assert.equal(state.plans[0].endAt, "2026-07-20T10:00:00+08:00");
+  assert.equal(state.plans[0].startAt, "2026-07-20T02:12:00Z");
+  assert.equal(state.plans[0].endAt, "2026-07-20T03:47:00Z");
   assert.equal(state.plans[0].timeStatus, "scheduled");
   assert.deepEqual(
     state.completionFacts[0].actualSegments,
@@ -1024,6 +1024,8 @@ test("imports Learning MORE course tables and facts while Week UP owns schedule 
   assert.equal(totalXpForAttribute(duplicate, duplicate.attributes[0].id), 3);
   assert.equal(duplicate.learningMoreLessons[0].completedAt, "2026-07-20T02:00:00Z");
   assert.equal(duplicate.plans[0].removedAt, undefined);
+  assert.equal(duplicate.plans[0].startAt, "2026-07-20T02:12:00Z");
+  assert.equal(duplicate.plans[0].endAt, "2026-07-20T03:47:00Z");
 });
 
 test("keeps a directly completed overdue Learning MORE lesson on its original schedule", () => {
@@ -1375,7 +1377,7 @@ test("keeps a future schedule in place when an ordinary plan is completed early"
   assert.deepEqual(state.dailySettlements[0].completedPlanIds, [planId]);
 });
 
-test("records Learning MORE actual time without moving its original schedule", () => {
+test("syncs Learning MORE actual time back to the completed plan schedule", () => {
   const h = harness("2026-07-20T08:00:00.000Z");
   const course = { courseId: "course-actual", title: "Course", status: "active" };
   const lesson = {
@@ -1393,9 +1395,6 @@ test("records Learning MORE actual time without moving its original schedule", (
     facts: [],
   });
   const planId = state.plans[0].id;
-  const scheduledStart = state.plans[0].startAt;
-  const scheduledEnd = state.plans[0].endAt;
-
   state = h.run(state, {
     type: "learning-more.import",
     facts: [{
@@ -1410,8 +1409,14 @@ test("records Learning MORE actual time without moving its original schedule", (
     }],
   });
 
-  assert.equal(state.plans[0].startAt, scheduledStart);
-  assert.equal(state.plans[0].endAt, scheduledEnd);
+  assert.equal(state.plans[0].startAt, "2026-07-20T15:10:00+08:00");
+  assert.equal(state.plans[0].endAt, "2026-07-20T16:00:00+08:00");
+  assert.equal(state.plans[0].timeStatus, "scheduled");
+  assert.deepEqual(state.plans[0].timeSegments?.map(({ startAt, endAt, completedAt }) => ({ startAt, endAt, completedAt })), [{
+    startAt: "2026-07-20T15:10:00+08:00",
+    endAt: "2026-07-20T16:00:00+08:00",
+    completedAt: "2026-07-20T16:00:00+08:00",
+  }]);
   assert.equal(state.completionFacts[0].planId, planId);
   assert.equal(state.completionFacts[0].completedAt, "2026-07-20T16:00:00+08:00");
   assert.deepEqual(
@@ -1419,6 +1424,56 @@ test("records Learning MORE actual time without moving its original schedule", (
     [{
       startAt: "2026-07-20T15:10:00+08:00",
       endAt: "2026-07-20T16:00:00+08:00",
+    }],
+  );
+});
+
+test("backfills existing completed Learning MORE plan time from completion facts", () => {
+  const h = harness("2026-07-20T08:00:00.000Z");
+  let state = h.run(createEmptyWeekUpState(), {
+    type: "learning-more.import",
+    courses: [{ courseId: "course-backfill", title: "Course", status: "active" }],
+    lessons: [{
+      courseId: "course-backfill",
+      lessonId: "lesson-backfill",
+      scheduleItemId: "schedule-backfill",
+      scheduledDate: "2026-07-20",
+      title: "Lesson",
+      order: 0,
+    }],
+    facts: [{
+      factId: "fact-backfill",
+      type: "lesson-completed",
+      occurredAt: "2026-07-20T16:00:00+08:00",
+      actualStartedAt: "2026-07-20T15:10:00+08:00",
+      actualEndedAt: "2026-07-20T16:00:00+08:00",
+      courseId: "course-backfill",
+      lessonId: "lesson-backfill",
+      scheduleItemId: "schedule-backfill",
+    }],
+  });
+  state = {
+    ...state,
+    plans: state.plans.map((plan) => ({
+      ...plan,
+      startAt: "2026-07-20T00:00:00+08:00",
+      endAt: "2026-07-20T01:00:00+08:00",
+      timeStatus: "unscheduled",
+      timeSegments: [],
+    })),
+  };
+
+  const migrated = migrateWeekUpState(state);
+
+  assert.equal(migrated.plans[0].startAt, "2026-07-20T15:10:00+08:00");
+  assert.equal(migrated.plans[0].endAt, "2026-07-20T16:00:00+08:00");
+  assert.equal(migrated.plans[0].timeStatus, "scheduled");
+  assert.deepEqual(
+    migrated.plans[0].timeSegments?.map(({ startAt, endAt, completedAt }) => ({ startAt, endAt, completedAt })),
+    [{
+      startAt: "2026-07-20T15:10:00+08:00",
+      endAt: "2026-07-20T16:00:00+08:00",
+      completedAt: "2026-07-20T16:00:00+08:00",
     }],
   );
 });
