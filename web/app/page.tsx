@@ -1069,12 +1069,12 @@ function TimeSegmentsEditor({ segments, onChange, allowUnscheduled = false }: { 
 
 type QuickPlanInput = Readonly<{ projectId?: string; title: string; segments: readonly TimeSegmentDraft[]; date: string; goalIds: readonly string[]; sourceLessonId?: string; recurrence: RecurrenceRule }>;
 
-function QuickAddModal({ projects, learningMoreLessons, attributes, goals, initialProjectId, initialLessonId, initialGoalIds = [], onClose, onAdd, onManageProjects }: { projects: readonly ProjectRecord[]; learningMoreLessons: readonly LearningMoreLesson[]; attributes: Attribute[]; goals: readonly GoalRecord[]; initialProjectId?: string; initialLessonId?: string; initialGoalIds?: readonly string[]; onClose: () => void; onAdd: (value: QuickPlanInput) => void; onManageProjects: () => void }) {
+function QuickAddModal({ projects, learningMoreLessons, attributes, goals, initialLessonId, initialGoalIds = [], onClose, onAdd, onManageProjects }: { projects: readonly ProjectRecord[]; learningMoreLessons: readonly LearningMoreLesson[]; attributes: Attribute[]; goals: readonly GoalRecord[]; initialLessonId?: string; initialGoalIds?: readonly string[]; onClose: () => void; onAdd: (value: QuickPlanInput) => void; onManageProjects: () => void }) {
   const [title, setTitle] = useState("");
   const [segments, setSegments] = useState<TimeSegmentDraft[]>([newTimeSegment("", "")]);
   const [date, setDate] = useState(currentLocalDate());
   const [goalIds, setGoalIds] = useState<string[]>(() => [...new Set(initialGoalIds.filter((id) => goals.some((goal) => goal.id === id && goal.archivedAt === undefined)))]);
-  const [projectId, setProjectId] = useState(initialProjectId && projects.some((project) => project.id === initialProjectId) ? initialProjectId : projects[0]?.id ?? "");
+  const [projectId, setProjectId] = useState("");
   const [repeatKind, setRepeatKind] = useState<"none" | "daily" | "weekly" | "interval">("none");
   const [repeatInterval, setRepeatInterval] = useState("2");
   const [repeatEnd, setRepeatEnd] = useState<"count" | "date">("count");
@@ -1314,7 +1314,6 @@ export default function Home() {
   const [weights, setWeights] = useState(INITIAL_WEIGHTS);
   const [completionFeedback, setCompletionFeedback] = useState<CompletionFeedback | null>(null);
   const [quickAddOpen, setQuickAddOpen] = useState(false);
-  const [quickAddProjectId, setQuickAddProjectId] = useState<string | undefined>();
   const [quickAddGoalIds, setQuickAddGoalIds] = useState<string[]>([]);
   const [attributeEditor, setAttributeEditor] = useState<"new" | AttributeRecord | null>(null);
   const [goalEditor, setGoalEditor] = useState<{ initial?: GoalRecord; period: GoalRecord["period"] } | null>(null);
@@ -1373,8 +1372,7 @@ export default function Home() {
 
   const completedCount = useMemo(() => plans.filter((plan) => plan.completed).length, [plans]);
 
-  const openQuickAdd = (projectId?: string, goalIds: readonly string[] = []) => {
-    setQuickAddProjectId(projectId);
+  const openQuickAdd = (goalIds: readonly string[] = []) => {
     setQuickAddGoalIds([...goalIds]);
     setQuickAddOpen(true);
   };
@@ -1430,7 +1428,6 @@ export default function Home() {
     if (recurrenceGroupId) {
       await weekUp.dispatch({ type: "plan.recurrence.create", ...(projectId ? { projectId } : {}), ...(title ? { title } : {}), startAts, endAts, timeSegmentsByOccurrence: inputsByOccurrence, timeStatus: unscheduled ? "unscheduled" : "scheduled", goalIds, recurrenceGroupId, recurrenceSummary: summary ?? "重复行动" });
       setQuickAddOpen(false);
-      setQuickAddProjectId(undefined);
       setQuickAddGoalIds([]);
       return;
     }
@@ -1445,7 +1442,6 @@ export default function Home() {
       }
     }
     setQuickAddOpen(false);
-    setQuickAddProjectId(undefined);
     setQuickAddGoalIds([]);
   };
 
@@ -1469,7 +1465,7 @@ export default function Home() {
         <div className="page-wrap">
           {weekUp.persistenceStatus === "offline" && <section className="persistence-alert" role="alert"><b>本地服务暂时离线</b><span>当前展示的是最近缓存，修改操作不会生效。请重新启动 Week UP 服务后刷新页面。</span></section>}
           {tab === "today" && <TodayView plans={plans} attributes={attributes} completionFacts={weekUp.state.completionFacts} weights={weights} onComplete={completePlan} onExternalComplete={completeLearningPlan} onQuickAdd={() => openQuickAdd()} onOpenWeight={() => setTab("weight")} onRecordWeight={addWeight} onEdit={(id) => setPlanEditor(weekUp.state.plans.find((plan) => plan.id === id) ?? null)} onUndo={undoPlan} onRemove={(id) => void weekUp.dispatch({ type: "plan.remove", id })} onRescheduleOverdue={(id) => setOverdueEditor(weekUp.state.plans.find((plan) => plan.id === id) ?? null)} />}
-          {tab === "week" && <WeekDashboard attributes={attributes} plans={plans} planRecords={weekUp.state.plans.filter((plan) => plan.removedAt === undefined)} goals={weekUp.state.goals} dailySettlements={weekUp.state.dailySettlements} settlements={weekUp.state.settlements} initialRange={selectedWeekRange} generatingHarvestIds={weekUp.generatingHarvestIds} onRetryHarvest={(id) => void weekUp.dispatch({ type: "settlement.harvest.retry", id })} onNewGoal={() => setGoalEditor({ period: "week" })} onEditGoal={(goal) => setGoalEditor({ period: "week", initial: goal })} onQuickAdd={(goalIds) => openQuickAdd(undefined, goalIds)} onOpenCalendar={() => openCalendar("week")} onOpenGrowth={() => setTab("growth")} onComplete={completePlan} onEditPlan={(id) => setPlanEditor(weekUp.state.plans.find((plan) => plan.id === id) ?? null)} onUndoPlan={undoPlan} onRemovePlan={(id) => void weekUp.dispatch({ type: "plan.remove", id })} onRescheduleOverdue={(id) => setOverdueEditor(weekUp.state.plans.find((plan) => plan.id === id) ?? null)} />}
+          {tab === "week" && <WeekDashboard attributes={attributes} plans={plans} planRecords={weekUp.state.plans.filter((plan) => plan.removedAt === undefined)} goals={weekUp.state.goals} dailySettlements={weekUp.state.dailySettlements} settlements={weekUp.state.settlements} initialRange={selectedWeekRange} generatingHarvestIds={weekUp.generatingHarvestIds} onRetryHarvest={(id) => void weekUp.dispatch({ type: "settlement.harvest.retry", id })} onNewGoal={() => setGoalEditor({ period: "week" })} onEditGoal={(goal) => setGoalEditor({ period: "week", initial: goal })} onQuickAdd={(goalIds) => openQuickAdd(goalIds)} onOpenCalendar={() => openCalendar("week")} onOpenGrowth={() => setTab("growth")} onComplete={completePlan} onEditPlan={(id) => setPlanEditor(weekUp.state.plans.find((plan) => plan.id === id) ?? null)} onUndoPlan={undoPlan} onRemovePlan={(id) => void weekUp.dispatch({ type: "plan.remove", id })} onRescheduleOverdue={(id) => setOverdueEditor(weekUp.state.plans.find((plan) => plan.id === id) ?? null)} />}
           {tab === "month" && <MonthDashboard attributes={attributes} plans={plans} planRecords={weekUp.state.plans.filter((plan) => plan.removedAt === undefined)} goals={weekUp.state.goals} projects={weekUp.state.projects} projectCategories={weekUp.state.projectCategories} dailySettlements={weekUp.state.dailySettlements} settlements={weekUp.state.settlements} weights={weights} generatingHarvestIds={weekUp.generatingHarvestIds} onRetryHarvest={(id) => void weekUp.dispatch({ type: "settlement.harvest.retry", id })} onNewGoal={() => setGoalEditor({ period: "month" })} onEditGoal={(goal) => setGoalEditor({ period: "month", initial: goal })} onOpenWeek={(weekRange) => { setSelectedWeekRange(weekRange); setTab("week"); }} onOpenCalendar={() => openCalendar("month")} onOpenWeight={() => setTab("weight")} />}
           {tab === "calendar" && <CalendarView plans={calendarContent === "timeline" ? weekUp.view.timelinePlans : plans} unconfiguredPlans={plans} untimedCompletionPlans={weekUp.view.timelinePlans} settledDates={weekUp.state.dailySettlements.map((settlement) => settlement.localDate)} initialMode={calendarInitialMode} content={calendarContent} onEditPlan={(id) => setPlanEditor(weekUp.state.plans.find((plan) => plan.id === id) ?? null)} />}
           {tab === "action-config" && <ActionConfigView attributes={attributes} attributeCategories={weekUp.state.attributeCategories} projectCategories={weekUp.state.projectCategories} projects={weekUp.state.projects.filter((project) => project.source === "week-up" && project.archivedAt === undefined)} courses={weekUp.state.learningMoreCourses} courseProjects={weekUp.state.projects.filter((project) => project.source === "learning-more" && project.archivedAt === undefined)} onNewAttribute={() => setAttributeEditor("new")} onEditAttribute={(attribute) => setAttributeEditor(weekUp.state.attributes.find((item) => item.id === attribute.id) ?? null)} onNewProject={() => setProjectEditor("new")} onEditProject={setProjectEditor} onConfigureCourse={setProjectEditor} onCreateCategory={(name) => { void weekUp.dispatch({ type: "attribute-category.create", name }); }} onRenameCategory={(id, name) => { void weekUp.dispatch({ type: "attribute-category.rename", id, name }); }} onDeleteCategory={(id) => { void weekUp.dispatch({ type: "attribute-category.delete", id }); }} onCreateProjectCategory={(name, color) => { void weekUp.dispatch({ type: "project-category.create", name, color }); }} onRenameProjectCategory={(id, name, color) => { void weekUp.dispatch({ type: "project-category.rename", id, name, color }); }} onDeleteProjectCategory={(id) => { void weekUp.dispatch({ type: "project-category.delete", id }); }} />}
@@ -1478,7 +1474,7 @@ export default function Home() {
         </div>
       </main>
       <nav className="mobile-nav" aria-label="移动端主导航">{NAV_ITEMS.map((item) => <button key={item.id} className={tab === item.id ? "active" : ""} onClick={() => navigateToTab(item.id)}><span>{item.icon}</span><small>{item.label}</small></button>)}</nav>
-      {quickAddOpen && <QuickAddModal projects={weekUp.state.projects.filter((project) => project.source === "week-up" && project.archivedAt === undefined)} learningMoreLessons={[]} attributes={attributes} goals={weekUp.state.goals.filter((goal) => goal.archivedAt === undefined)} initialProjectId={quickAddProjectId} initialGoalIds={quickAddGoalIds} onClose={() => { setQuickAddOpen(false); setQuickAddProjectId(undefined); setQuickAddGoalIds([]); }} onAdd={addPlan} onManageProjects={() => { setQuickAddOpen(false); setQuickAddProjectId(undefined); setQuickAddGoalIds([]); setTab("action-config"); }} />}
+      {quickAddOpen && <QuickAddModal projects={weekUp.state.projects.filter((project) => project.source === "week-up" && project.archivedAt === undefined)} learningMoreLessons={[]} attributes={attributes} goals={weekUp.state.goals.filter((goal) => goal.archivedAt === undefined)} initialGoalIds={quickAddGoalIds} onClose={() => { setQuickAddOpen(false); setQuickAddGoalIds([]); }} onAdd={addPlan} onManageProjects={() => { setQuickAddOpen(false); setQuickAddGoalIds([]); setTab("action-config"); }} />}
       {attributeEditor && <AttributeModal initial={attributeEditor === "new" ? undefined : attributeEditor} categories={weekUp.state.attributeCategories} onClose={() => setAttributeEditor(null)} onSave={(value) => { if (attributeEditor === "new") void weekUp.dispatch({ type: "attribute.create", value }); else void weekUp.dispatch({ type: "attribute.update", id: attributeEditor.id, patch: value }); setAttributeEditor(null); }} {...(attributeEditor === "new" ? {} : { onArchive: () => { void weekUp.dispatch({ type: "attribute.archive", id: attributeEditor.id }); setAttributeEditor(null); }, onRemove: () => { void weekUp.dispatch({ type: "attribute.remove", id: attributeEditor.id }); setAttributeEditor(null); } })} />}
       {goalEditor && <GoalModal initial={goalEditor.initial} defaultPeriod={goalEditor.period} goals={weekUp.state.goals.filter((goal) => goal.archivedAt === undefined)} onClose={() => setGoalEditor(null)} onSave={(value) => { if (goalEditor.initial) void weekUp.dispatch({ type: "goal.update", id: goalEditor.initial.id, patch: value }); else void weekUp.dispatch({ type: "goal.create", value }); setGoalEditor(null); }} {...(goalEditor.initial ? { onArchive: () => { void weekUp.dispatch({ type: "goal.archive", id: goalEditor.initial!.id }); setGoalEditor(null); }, onRemove: () => { void weekUp.dispatch({ type: "goal.remove", id: goalEditor.initial!.id }); setGoalEditor(null); } } : {})} />}
       {projectEditor && <ProjectModal initial={projectEditor === "new" ? undefined : projectEditor} attributes={weekUp.state.attributes.filter((attribute) => attribute.archivedAt === undefined)} projectCategories={weekUp.state.projectCategories} onClose={() => setProjectEditor(null)} onSave={(value) => { if (projectEditor === "new") void weekUp.dispatch({ type: "project.create", value }); else void weekUp.dispatch({ type: "project.update", id: projectEditor.id, patch: value }); setProjectEditor(null); }} {...(projectEditor !== "new" && projectEditor.source === "week-up" ? { onRemove: () => { void weekUp.dispatch({ type: "project.remove", id: projectEditor.id }); setProjectEditor(null); } } : {})} />}

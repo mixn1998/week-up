@@ -369,7 +369,7 @@ test("prefills the selected weekly goal and its linked month directions when sch
   assert.match(page, /new Set\(initialGoalIds\.filter/);
   assert.match(page, /setQuickAddGoalIds\(\[\.\.\.goalIds\]\)/);
   assert.match(page, /initialGoalIds=\{quickAddGoalIds\}/);
-  assert.match(page, /onQuickAdd=\{\(goalIds\) => openQuickAdd\(undefined, goalIds\)\}/);
+  assert.match(page, /onQuickAdd=\{\(goalIds\) => openQuickAdd\(goalIds\)\}/);
 });
 
 test("supports multiple execution segments with one final plan settlement", async () => {
@@ -465,4 +465,12 @@ test("styles linked goals as roomy selectable pixel cards", async () => {
   assert.match(css, /\.goal-links \{[^}]*margin-top: 22px/);
   assert.match(css, /\.goal-links \.check-row:has\(input:checked\)/);
   assert.match(css, /\.goal-links \.check-row input \{[^}]*appearance: none/);
+});
+
+test("defaults every quick-add form to a temporary plan", async () => {
+  const page = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
+  assert.match(page, /const \[projectId, setProjectId\] = useState\(""\);/);
+  assert.match(page, /<option value="">临时计划（不使用项目）<\/option>/);
+  assert.doesNotMatch(page, /projects\[0\]\?\.id \?\? ""/);
+  assert.doesNotMatch(page, /initialProjectId|quickAddProjectId/);
 });
