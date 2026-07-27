@@ -20,7 +20,9 @@ test("builds an AI review request from frozen facts without user-authored reflec
   state = h.run(state, { type: "plan.complete", id: state.plans[0].id, completedAt: "2026-07-22T10:00:00+08:00" });
   state = h.run(state, { type: "settlement.generate", period: "week", startDate: "2026-07-20", endDate: "2026-07-26" });
   const facts = buildReviewSummaryFacts(state, state.settlements[0]);
+  assert.equal(facts.completedCount, 1);
   assert.equal(facts.completedContent[0].title, "概率论");
+  assert.deepEqual(facts.incompleteContent, []);
   assert.equal(facts.goals[0].completedPlanCount, 1);
   assert.deepEqual(facts.attributeGains[0], { name: "推理", icon: "◆", amount: 10 });
   assert.deepEqual(facts.badgeUpgrades[0], { name: "推理", fromLevel: 1, toLevel: 2 });
@@ -33,7 +35,7 @@ test("posts the factual payload and accepts only a non-empty AI harvest", async 
     captured = JSON.parse(init.body);
     return new Response(JSON.stringify({ text: "你完成了关键的一步，积累正在变得清晰。", provider: "codex-cli", preferredProvider: "codex-cli", fallbackUsed: false, checkedAt: "2026-07-31T00:00:00.000Z" }), { status: 200, headers: { "content-type": "application/json" } });
   });
-  const result = await client.generate({ period: "month", startDate: "2026-07-01", endDate: "2026-07-31", goals: [], completedContent: [], incompleteContent: [], attributeGains: [], badgeUpgrades: [], skillbooks: [] });
+  const result = await client.generate({ period: "month", startDate: "2026-07-01", endDate: "2026-07-31", completedCount: 0, goals: [], completedContent: [], incompleteContent: [], attributeGains: [], badgeUpgrades: [], skillbooks: [] });
   assert.equal(result.text, "你完成了关键的一步，积累正在变得清晰。");
   assert.equal(result.provider, "codex-cli");
   assert.equal(captured.output.title, "本月收获");

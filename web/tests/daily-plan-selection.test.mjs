@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { selectDailyPlans } from "../lib/daily-plan-selection.ts";
+import { selectDailyPlans, selectPeriodOverduePlans } from "../lib/daily-plan-selection.ts";
 
 const plan = (overrides = {}) => ({
   id: "plan",
@@ -57,4 +57,34 @@ test("daily recurrence misses stay on their original day and never enter the ove
   const result = selectDailyPlans([dailyMiss, intervalMiss], "2026-07-22", 2);
 
   assert.deepEqual(result.overduePlans.map((item) => item.id), ["interval-miss"]);
+});
+
+test("period overdue content reuses the daily overdue lifecycle and only keeps plans inside the period", () => {
+  const previousWeek = plan({ id: "previous-week", scheduledDate: "2026-07-19", overdue: true });
+  const unresolved = plan({ id: "unresolved", scheduledDate: "2026-07-20", overdue: true });
+  const rescheduled = plan({ id: "rescheduled", scheduledDate: "2026-07-21", overdue: true, overdueRescheduled: true });
+  const completed = plan({ id: "completed", scheduledDate: "2026-07-22", overdue: true, completed: true });
+  const nextWeek = plan({ id: "next-week", scheduledDate: "2026-07-27", overdue: true });
+
+  const result = selectPeriodOverduePlans(
+    [previousWeek, unresolved, rescheduled, completed, nextWeek],
+    "2026-07-20",
+    "2026-07-26",
+  );
+
+  assert.deepEqual(result.map((item) => item.id), ["unresolved"]);
+});
+
+test("a settled period uses its frozen overdue ids after the live queue changes", () => {
+  const rescheduled = plan({ id: "rescheduled", scheduledDate: "2026-07-20", overdue: true, overdueRescheduled: true });
+  const completed = plan({ id: "completed", scheduledDate: "2026-07-21", overdue: false, completed: true });
+
+  const result = selectPeriodOverduePlans(
+    [rescheduled, completed],
+    "2026-07-20",
+    "2026-07-26",
+    ["rescheduled", "completed"],
+  );
+
+  assert.deepEqual(result.map((item) => item.id), ["rescheduled", "completed"]);
 });

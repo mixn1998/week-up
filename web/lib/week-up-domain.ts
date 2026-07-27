@@ -2,7 +2,7 @@ import { colorIdForCategory, isCategoryColorId } from "./category-palette.ts";
 
 import { canRescheduleInsideWeekUp, participatesInOverdueQueue } from "./overdue-policy.ts";
 
-export const WEEK_UP_SCHEMA_VERSION = 18 as const;
+export const WEEK_UP_SCHEMA_VERSION = 22 as const;
 
 export type AiProviderId = "codex-cli" | "api";
 
@@ -151,7 +151,9 @@ export type SettlementRecord = Readonly<{
   startDate: string;
   endDate: string;
   generatedAt: string;
+  planIds: readonly string[];
   completedPlanIds: readonly string[];
+  overduePlanIds: readonly string[];
   incompletePlanIds: readonly string[];
   attributeGains: Readonly<Record<string, number>>;
   harvest: Readonly<{
@@ -219,6 +221,72 @@ export type WeekUpState = Readonly<{
   learningMore: LearningMoreState;
   aiReview: AiReviewState;
 }>;
+
+type MigratableSettlementSnapshot = Omit<SettlementRecord, "planIds" | "overduePlanIds"> & Partial<Pick<SettlementRecord, "planIds" | "overduePlanIds">>;
+
+function idsFromDailySettlements(
+  dailySettlements: readonly DailySettlementRecord[],
+  startDate: string,
+  endDate: string,
+  key: "planIds" | "completedPlanIds",
+): string[] {
+  return [...new Set(
+    dailySettlements
+      .filter((settlement) => settlement.localDate >= startDate && settlement.localDate <= endDate)
+      .flatMap((settlement) => settlement[key]),
+  )];
+}
+
+function planWasOverdueAt(
+  state: Pick<WeekUpState, "plans" | "completionFacts">,
+  planId: string,
+  generatedAt: string,
+): boolean {
+  const plan = state.plans.find((item) => item.id === planId);
+  if (!plan || !planIsOverdue(plan, generatedAt)) return false;
+  const completedBeforeSettlement = state.completionFacts.some((fact) =>
+    fact.planId === planId
+    && fact.revertedAt === undefined
+    && fact.completedAt <= generatedAt
+  );
+  if (completedBeforeSettlement) return false;
+  if (!plan.overdueRescheduledPlanId) return true;
+  const carried = state.plans.find((item) => item.id === plan.overdueRescheduledPlanId);
+  return carried === undefined || carried.createdAt > generatedAt;
+}
+
+export function upgradeWeeklyReviewSettlements(
+  settlements: readonly MigratableSettlementSnapshot[],
+  sourceSchemaVersion: number,
+  state: Pick<WeekUpState, "plans" | "completionFacts" | "dailySettlements">,
+): readonly SettlementRecord[] {
+  return settlements.map((settlement): SettlementRecord => {
+    const historicalPlanIds = settlement.period === "week"
+      ? idsFromDailySettlements(state.dailySettlements, settlement.startDate, settlement.endDate, "planIds")
+      : [];
+    const rebuiltOverduePlanIds = settlement.period === "week"
+      ? historicalPlanIds.filter((id) => planWasOverdueAt(state, id, settlement.generatedAt))
+      : [];
+    const overduePlanIds = sourceSchemaVersion < 22
+      ? rebuiltOverduePlanIds
+      : settlement.overduePlanIds ?? rebuiltOverduePlanIds;
+    const planIds = sourceSchemaVersion < 22
+      ? settlement.period === "week"
+        ? [...new Set([...settlement.completedPlanIds, ...overduePlanIds])]
+        : [...new Set([...settlement.completedPlanIds, ...settlement.incompletePlanIds])]
+      : settlement.planIds ?? [...new Set([...settlement.completedPlanIds, ...settlement.incompletePlanIds, ...overduePlanIds])];
+    const harvest = sourceSchemaVersion < 20 && settlement.period === "week" && settlement.harvest.status === "ready"
+      ? { ...settlement.harvest, status: "stale" as const }
+      : settlement.harvest;
+    return {
+      ...settlement,
+      planIds,
+      overduePlanIds,
+      ...(settlement.period === "week" ? { incompletePlanIds: [] } : {}),
+      harvest,
+    };
+  });
+}
 
 export type LearningMoreLessonItem = Readonly<{
   courseId: string;
@@ -601,23 +669,37 @@ function freezePastDailySettlements(
   };
 }
 
-function settlementSnapshot(state: WeekUpState, startDate: string, endDate: string, generatedAt: string) {
-  const plans = state.plans.filter((plan) => localDate(plan.startAt) >= startDate && localDate(plan.startAt) <= endDate && plan.removedAt === undefined);
-  const completedFacts = state.completionFacts.filter((fact) => fact.revertedAt === undefined && plans.some((plan) => plan.id === fact.planId));
-  const completedIds = new Set(completedFacts.map((fact) => fact.planId));
+function settlementSnapshot(state: WeekUpState, period: SettlementRecord["period"], startDate: string, endDate: string, generatedAt: string) {
+  const periodPlans = state.plans.filter((plan) => localDate(plan.startAt) >= startDate && localDate(plan.startAt) <= endDate && plan.removedAt === undefined);
+  const completedPlanIds = periodPlans
+    .filter((plan) => state.completionFacts.some((fact) => fact.planId === plan.id && fact.revertedAt === undefined))
+    .map((plan) => plan.id);
+  const completedIds = new Set(completedPlanIds);
+  const completedFacts = state.completionFacts.filter((fact) => fact.revertedAt === undefined && completedIds.has(fact.planId));
   const attributeGains: Record<string, number> = {};
   for (const fact of completedFacts) {
     for (const reward of fact.rewardSnapshot) attributeGains[reward.attributeId] = (attributeGains[reward.attributeId] ?? 0) + reward.amount;
   }
+  const overduePlanIds = period === "week"
+    ? periodPlans.filter((plan) => !completedIds.has(plan.id) && planWasOverdueAt(state, plan.id, generatedAt)).map((plan) => plan.id)
+    : [];
   return {
-    completedPlanIds: plans.filter((plan) => completedIds.has(plan.id)).map((plan) => plan.id),
-    incompletePlanIds: plans.filter((plan) => !completedIds.has(plan.id) && !planIsOverdue(plan, generatedAt)).map((plan) => plan.id),
+    planIds: period === "week"
+      ? [...new Set([...completedPlanIds, ...overduePlanIds])]
+      : periodPlans.map((plan) => plan.id),
+    completedPlanIds,
+    overduePlanIds,
+    incompletePlanIds: period === "week"
+      ? []
+      : periodPlans.filter((plan) => !completedIds.has(plan.id) && !planIsOverdue(plan, generatedAt)).map((plan) => plan.id),
     attributeGains,
   };
 }
 
 function sameSettlementSnapshot(settlement: SettlementRecord, snapshot: ReturnType<typeof settlementSnapshot>): boolean {
-  return JSON.stringify(settlement.completedPlanIds) === JSON.stringify(snapshot.completedPlanIds)
+  return JSON.stringify(settlement.planIds) === JSON.stringify(snapshot.planIds)
+    && JSON.stringify(settlement.completedPlanIds) === JSON.stringify(snapshot.completedPlanIds)
+    && JSON.stringify(settlement.overduePlanIds) === JSON.stringify(snapshot.overduePlanIds)
     && JSON.stringify(settlement.incompletePlanIds) === JSON.stringify(snapshot.incompletePlanIds)
     && JSON.stringify(settlement.attributeGains) === JSON.stringify(snapshot.attributeGains);
 }
@@ -625,7 +707,8 @@ function sameSettlementSnapshot(settlement: SettlementRecord, snapshot: ReturnTy
 function refreshSettlementsAfterFactChanges(state: WeekUpState, now: string): WeekUpState {
   let changedAny = false;
   const settlements = state.settlements.map((settlement): SettlementRecord => {
-    const snapshot = settlementSnapshot(state, settlement.startDate, settlement.endDate, now);
+    if (settlement.period === "week") return settlement;
+    const snapshot = settlementSnapshot(state, settlement.period, settlement.startDate, settlement.endDate, now);
     if (sameSettlementSnapshot(settlement, snapshot)) return settlement;
     changedAny = true;
     const harvest = settlement.harvest.status === "failed"
@@ -1531,7 +1614,10 @@ export function dispatchWeekUp(state: WeekUpState, command: WeekUpCommand, conte
       const key = `${command.period}:${command.startDate}:${command.endDate}`;
       const existing = state.settlements.find((item) => `${item.period}:${item.startDate}:${item.endDate}` === key);
       if (existing) return unchanged(state, existing.id);
-      const snapshot = settlementSnapshot(state, command.startDate, command.endDate, now);
+      const settlementState = command.period === "week"
+        ? freezePastDailySettlements(state, now, context)
+        : state;
+      const snapshot = settlementSnapshot(settlementState, command.period, command.startDate, command.endDate, now);
       const id = context.id("settlement");
       const settlement: SettlementRecord = {
         id,
@@ -1542,7 +1628,7 @@ export function dispatchWeekUp(state: WeekUpState, command: WeekUpCommand, conte
         ...snapshot,
         harvest: { status: "pending" },
       };
-      return changed(state, { settlements: [...state.settlements, settlement] }, id);
+      return changed(settlementState, { settlements: [...settlementState.settlements, settlement] }, id);
     }
     case "settlement.harvest.succeeded": {
       assertNonEmpty(command.text, "harvest_text");
@@ -1873,8 +1959,8 @@ export function migrateWeekUpState(value: unknown): WeekUpState {
   if (value === undefined || value === null) return createEmptyWeekUpState();
   if (typeof value !== "object") throw new Error("database_state_invalid");
   const version = (value as { schemaVersion?: unknown }).schemaVersion;
-  if (version !== 1 && version !== 2 && version !== 3 && version !== 4 && version !== 5 && version !== 6 && version !== 7 && version !== 8 && version !== 9 && version !== 10 && version !== 11 && version !== 12 && version !== 13 && version !== 14 && version !== 15 && version !== 16 && version !== 17 && version !== WEEK_UP_SCHEMA_VERSION) throw new Error("database_schema_unsupported");
-  type MigratableSettlement = Omit<SettlementRecord, "harvest"> & {
+  if (version !== 1 && version !== 2 && version !== 3 && version !== 4 && version !== 5 && version !== 6 && version !== 7 && version !== 8 && version !== 9 && version !== 10 && version !== 11 && version !== 12 && version !== 13 && version !== 14 && version !== 15 && version !== 16 && version !== 17 && version !== 18 && version !== 19 && version !== 20 && version !== 21 && version !== WEEK_UP_SCHEMA_VERSION) throw new Error("database_schema_unsupported");
+  type MigratableSettlement = Omit<SettlementRecord, "harvest" | "planIds" | "overduePlanIds"> & Partial<Pick<SettlementRecord, "planIds" | "overduePlanIds">> & {
     harvest?: SettlementRecord["harvest"];
     reflection?: string;
   };
@@ -1892,7 +1978,7 @@ export function migrateWeekUpState(value: unknown): WeekUpState {
     revertedAt?: string;
   }>;
   const raw = value as Omit<WeekUpState, "schemaVersion" | "attributeCategories" | "projectCategories" | "plans" | "projects" | "learningMoreCourses" | "learningMoreLessons" | "completionFacts" | "dailySettlements" | "settlements" | "aiReview"> & {
-    schemaVersion: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 17 | 18;
+    schemaVersion: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 17 | 18 | 19 | 20 | 21 | 22;
     attributeCategories?: readonly MigratableCategory[];
     projectCategories?: readonly MigratableCategory[];
     plans: readonly (Omit<PlanRecord, "rewardMode"> & Partial<Pick<PlanRecord, "rewardMode">>)[];
@@ -2024,6 +2110,11 @@ export function migrateWeekUpState(value: unknown): WeekUpState {
     return categories;
   }, []);
   const { executionRecords: _legacyExecutionRecords, completionFacts: _legacyCompletionFacts, ...rawState } = raw;
+  const dailySettlements = "dailySettlements" in raw && Array.isArray(raw.dailySettlements) ? raw.dailySettlements : [];
+  const settlements = upgradeWeeklyReviewSettlements((raw.settlements ?? []).map(({ reflection: _legacyReflection, ...settlement }) => {
+    const harvest = settlement.harvest ?? { status: "pending" as const };
+    return { ...settlement, harvest };
+  }), raw.schemaVersion, { plans, completionFacts, dailySettlements });
   return {
     ...rawState,
     schemaVersion: WEEK_UP_SCHEMA_VERSION,
@@ -2040,11 +2131,8 @@ export function migrateWeekUpState(value: unknown): WeekUpState {
     learningMoreCourses: raw.schemaVersion < 5 ? [] : raw.learningMoreCourses ?? [],
     learningMoreLessons: raw.schemaVersion < 5 ? [] : (raw.learningMoreLessons ?? []).map((lesson, index) => ({ ...lesson, scheduleItemId: lesson.scheduleItemId!, scheduledDate: lesson.scheduledDate!, order: lesson.order ?? index })),
     completionFacts,
-    dailySettlements: "dailySettlements" in raw && Array.isArray(raw.dailySettlements) ? raw.dailySettlements : [],
-    settlements: (raw.settlements ?? []).map(({ reflection: _legacyReflection, ...settlement }) => ({
-      ...settlement,
-      harvest: settlement.harvest ?? { status: "pending" },
-    })),
+    dailySettlements,
+    settlements,
     preferences: raw.preferences ?? {},
     aiReview: {
       baseUrl: "/week-up-review-api",

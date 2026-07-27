@@ -713,7 +713,7 @@ test("can carry an overdue plan into a new date without assigning a time", () =>
   assert.equal(carried.startAt.slice(0, 10), "2026-07-21");
 });
 
-test("refreshes a frozen settlement when a historical completion fact is corrected", () => {
+test("does not rewrite a frozen weekly settlement after a historical completion correction", () => {
   const h = harness("2026-07-20T08:00:00+08:00");
   let state = addAttribute(h, createEmptyWeekUpState());
   state = addPlan(h, state, state.attributes[0].id, {
@@ -724,27 +724,38 @@ test("refreshes a frozen settlement when a historical completion fact is correct
   const planId = state.plans[0].id;
   state = h.run(state, { type: "settlement.generate", period: "week", startDate: "2026-07-13", endDate: "2026-07-19" });
   assert.equal(state.settlements[0].completedPlanIds.includes(planId), false);
+  state = h.run(state, { type: "settlement.harvest.succeeded", id: state.settlements[0].id, text: "冻结周报" });
   state = h.run(state, { type: "plan.complete", id: planId, completedAt: "2026-07-19T20:00:00+08:00" });
-  assert.equal(state.settlements[0].completedPlanIds.includes(planId), true);
-  assert.equal(state.settlements[0].attributeGains[state.attributes[0].id], 2);
-  assert.equal(state.settlements[0].harvest.status, "stale");
+  assert.equal(state.settlements[0].completedPlanIds.includes(planId), false);
+  assert.equal(state.settlements[0].attributeGains[state.attributes[0].id], undefined);
+  assert.equal(state.settlements[0].harvest.status, "ready");
+  assert.equal(state.settlements[0].harvest.text, "冻结周报");
 });
 
-test("freezes weekly and monthly facts and queues an AI harvest idempotently", () => {
-  const h = harness();
+test("freezes weekly plan, completion, and overdue facts before later queue changes", () => {
+  const h = harness("2026-07-27T00:30:00+08:00");
   let state = addAttribute(h, createEmptyWeekUpState());
   const attributeId = state.attributes[0].id;
   state = addPlan(h, state, attributeId);
   state = addPlan(h, state, attributeId, { title: "未完成的阅读", startAt: "2026-07-21T09:00:00+08:00", endAt: "2026-07-21T10:00:00+08:00" });
-  state = h.run(state, { type: "plan.complete", id: state.plans[0].id });
+  state = h.run(state, { type: "plan.complete", id: state.plans[0].id, completedAt: "2026-07-20T10:00:00+08:00" });
   state = h.run(state, { type: "settlement.generate", period: "week", startDate: "2026-07-20", endDate: "2026-07-26" });
   const frozen = state.settlements[0];
   const duplicate = h.run(state, { type: "settlement.generate", period: "week", startDate: "2026-07-20", endDate: "2026-07-26" });
   assert.equal(duplicate, state);
+  assert.deepEqual(frozen.planIds, state.plans.map((plan) => plan.id));
   assert.deepEqual(frozen.completedPlanIds, [state.plans[0].id]);
-  assert.deepEqual(frozen.incompletePlanIds, [state.plans[1].id]);
+  assert.deepEqual(frozen.overduePlanIds, [state.plans[1].id]);
+  assert.deepEqual(frozen.incompletePlanIds, []);
   assert.equal(frozen.attributeGains[attributeId], 2);
   assert.deepEqual(frozen.harvest, { status: "pending" });
+  state = h.run(state, { type: "plan.overdue.reschedule", id: state.plans[1].id, startAt: "2026-07-27T09:00:00+08:00", endAt: "2026-07-27T10:00:00+08:00" });
+  const carried = state.plans.find((plan) => plan.overdueSourcePlanId === frozen.overduePlanIds[0]);
+  h.setNow("2026-07-27T10:00:00+08:00");
+  state = h.run(state, { type: "plan.complete", id: carried.id, completedAt: "2026-07-27T10:00:00+08:00" });
+  assert.deepEqual(state.settlements[0].planIds, frozen.planIds);
+  assert.deepEqual(state.settlements[0].completedPlanIds, frozen.completedPlanIds);
+  assert.deepEqual(state.settlements[0].overduePlanIds, frozen.overduePlanIds);
   state = h.run(state, { type: "settlement.harvest.failed", id: frozen.id, message: "offline" });
   assert.deepEqual(state.settlements[0].harvest, { status: "failed", error: "offline" });
   state = h.run(state, { type: "settlement.harvest.retry", id: frozen.id });
@@ -753,7 +764,7 @@ test("freezes weekly and monthly facts and queues an AI harvest idempotently", (
   assert.equal(state.settlements[0].harvest.text, "你本周稳稳推进了数学学习。");
 });
 
-test("counts only Learning MORE lessons scheduled inside the settlement period", () => {
+test("does not freeze incomplete Learning MORE lessons into a weekly settlement", () => {
   const h = harness();
   let state = createEmptyWeekUpState();
   const lessons = [
@@ -763,10 +774,10 @@ test("counts only Learning MORE lessons scheduled inside the settlement period",
   ];
   state = h.run(state, { type: "learning-more.import", courses: [{ courseId: "c1", title: "概率论", status: "active" }], lessons, facts: [] });
   state = h.run(state, { type: "settlement.generate", period: "week", startDate: "2026-07-20", endDate: "2026-07-26" });
-  assert.deepEqual(state.settlements[0].incompletePlanIds, [state.plans.find((plan) => plan.sourceLessonId === "l1").id]);
+  assert.deepEqual(state.settlements[0].incompletePlanIds, []);
 });
 
-test("refreshes a settled period and allows one AI regeneration after a historical Learning MORE backfill", () => {
+test("keeps a settled weekly period frozen after a historical Learning MORE backfill", () => {
   const h = harness("2026-07-20T08:00:00.000Z");
   let state = h.run(createEmptyWeekUpState(), {
     type: "learning-more.import",
@@ -786,11 +797,9 @@ test("refreshes a settled period and allows one AI regeneration after a historic
     facts: [{ factId: "fact-b", type: "lesson-completed", occurredAt: "2026-07-17T13:00:00+08:00", courseId: "course-game", lessonId: "lesson-b" }],
   });
 
-  assert.equal(state.settlements[0].completedPlanIds.length, 2);
-  assert.equal(state.settlements[0].harvest.status, "stale");
+  assert.equal(state.settlements[0].completedPlanIds.length, 1);
+  assert.equal(state.settlements[0].harvest.status, "ready");
   assert.equal(state.settlements[0].harvest.text, "旧总结");
-  state = h.run(state, { type: "settlement.harvest.retry", id: state.settlements[0].id });
-  assert.equal(state.settlements[0].harvest.status, "pending");
 });
 
 test("keeps one effective daily weight while preserving revision history", () => {
@@ -1426,6 +1435,55 @@ test("syncs Learning MORE actual time back to the completed plan schedule", () =
       endAt: "2026-07-20T16:00:00+08:00",
     }],
   );
+});
+
+test("migrates old weekly harvests to the completed-only review scope", () => {
+  const h = harness();
+  let state = addAttribute(h, createEmptyWeekUpState());
+  state = addPlan(h, state, state.attributes[0].id);
+  state = h.run(state, { type: "plan.complete", id: state.plans[0].id, completedAt: "2026-07-20T10:00:00+08:00" });
+  state = h.run(state, { type: "settlement.generate", period: "week", startDate: "2026-07-20", endDate: "2026-07-26" });
+  state = h.run(state, { type: "settlement.harvest.succeeded", id: state.settlements[0].id, text: "旧周报" });
+
+  const migrated = migrateWeekUpState({
+    ...state,
+    schemaVersion: 18,
+    settlements: state.settlements.map((settlement) => ({ ...settlement, incompletePlanIds: ["legacy-open-plan"] })),
+  });
+
+  assert.equal(migrated.schemaVersion, 22);
+  assert.deepEqual(migrated.settlements[0].incompletePlanIds, []);
+  assert.equal(migrated.settlements[0].harvest.status, "stale");
+  assert.equal(migrated.settlements[0].harvest.text, "旧周报");
+});
+
+test("rebuilds schema 21 weekly totals from completed and still-overdue plans only", () => {
+  const h = harness("2026-07-27T00:30:00+08:00");
+  let state = addAttribute(h, createEmptyWeekUpState());
+  state = addPlan(h, state, state.attributes[0].id);
+  state = h.run(state, { type: "plan.complete", id: state.plans[0].id, completedAt: "2026-07-20T10:00:00+08:00" });
+  state = h.run(state, { type: "settlement.generate", period: "week", startDate: "2026-07-20", endDate: "2026-07-26" });
+  const completedId = state.plans[0].id;
+  const migrated = migrateWeekUpState({
+    ...state,
+    schemaVersion: 21,
+    dailySettlements: [{
+      id: "legacy-day",
+      localDate: "2026-07-20",
+      settledAt: "2026-07-21T00:00:00+08:00",
+      planIds: [completedId, "plan-removed-before-week-settlement"],
+      completedPlanIds: [completedId],
+    }],
+    settlements: state.settlements.map((settlement) => ({
+      ...settlement,
+      planIds: [completedId, "plan-removed-before-week-settlement"],
+      overduePlanIds: [],
+    })),
+  });
+
+  assert.equal(migrated.schemaVersion, 22);
+  assert.deepEqual(migrated.settlements[0].planIds, [completedId]);
+  assert.deepEqual(migrated.settlements[0].overduePlanIds, []);
 });
 
 test("backfills existing completed Learning MORE plan time from completion facts", () => {

@@ -27,6 +27,40 @@ test("persists command results across SQLite restarts", async (t) => {
   store.close();
 });
 
+test("applies the completed-only weekly review migration after replaying old harvest events", async (t) => {
+  const files = await fixture(t);
+  let store = await createWeekUpDatabase(files.path);
+  let state = store.dispatch(attributeCommand, { expectedRevision: 0, commandId: "attribute", occurredAt: "2026-07-20T08:00:00.000Z" });
+  state = store.dispatch({
+    type: "plan.create",
+    value: {
+      title: "完成行动",
+      detail: "",
+      category: "学习",
+      startAt: "2026-07-20T09:00:00+08:00",
+      endAt: "2026-07-20T10:00:00+08:00",
+      goalIds: [],
+      rewards: [{ attributeId: state.attributes[0].id, amount: 1 }],
+    },
+  }, { expectedRevision: state.revision, commandId: "plan", occurredAt: "2026-07-20T08:01:00.000Z" });
+  state = store.dispatch({ type: "plan.complete", id: state.plans[0].id }, { expectedRevision: state.revision, commandId: "complete", occurredAt: "2026-07-20T10:00:00.000Z" });
+  state = store.dispatch({ type: "settlement.generate", period: "week", startDate: "2026-07-20", endDate: "2026-07-26" }, { expectedRevision: state.revision, commandId: "settle", occurredAt: "2026-07-27T00:00:00.000Z" });
+  state = store.dispatch({ type: "settlement.harvest.succeeded", id: state.settlements[0].id, text: "旧周报" }, { expectedRevision: state.revision, commandId: "harvest", occurredAt: "2026-07-27T00:01:00.000Z" });
+  store.close();
+
+  const database = new DatabaseSync(files.path);
+  const snapshot = database.prepare("SELECT revision, state_json FROM week_up_snapshots ORDER BY revision DESC LIMIT 1").get();
+  const oldState = { ...JSON.parse(snapshot.state_json), schemaVersion: 19 };
+  database.prepare("UPDATE week_up_snapshots SET state_json = ? WHERE revision = ?").run(JSON.stringify(oldState), snapshot.revision);
+  database.close();
+
+  store = await createWeekUpDatabase(files.path);
+  assert.equal(store.load().schemaVersion, 22);
+  assert.equal(store.load().settlements[0].harvest.status, "stale");
+  assert.equal(store.load().settlements[0].harvest.text, "旧周报");
+  store.close();
+});
+
 test("makes command ids idempotent and rejects stale revisions", async (t) => {
   const files = await fixture(t);
   const store = await createWeekUpDatabase(files.path);

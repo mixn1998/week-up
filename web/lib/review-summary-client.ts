@@ -5,6 +5,7 @@ export type ReviewSummaryFacts = Readonly<{
   period: "week" | "month";
   startDate: string;
   endDate: string;
+  completedCount: number;
   goals: readonly Readonly<{ title: string; note: string; period: "week" | "month"; completedPlanCount: number; scheduledPlanCount: number }>[];
   completedContent: readonly Readonly<{ title: string; detail: string; category: string; scheduledAt: string; source: "week-up" | "learning-more" }>[];
   incompleteContent: readonly Readonly<{ title: string; detail: string; category: string; scheduledAt: string; source: "week-up" | "learning-more" }>[];
@@ -84,9 +85,12 @@ export function buildReviewSummaryFacts(state: WeekUpState, settlement: Settleme
     period: settlement.period,
     startDate: settlement.startDate,
     endDate: settlement.endDate,
+    completedCount: settlement.completedPlanIds.length,
     goals,
     completedContent: settlementPlans.filter((plan) => completedIds.has(plan.id)).map(projectPlan),
-    incompleteContent: settlementPlans.filter((plan) => incompleteIds.has(plan.id)).map(projectPlan),
+    incompleteContent: settlement.period === "week"
+      ? []
+      : settlementPlans.filter((plan) => incompleteIds.has(plan.id)).map(projectPlan),
     attributeGains,
     badgeUpgrades,
     skillbooks: state.skillbooks.filter((book) => localDate(book.acquiredAt) >= settlement.startDate && localDate(book.acquiredAt) <= settlement.endDate).map((book) => ({ title: book.title, acquiredAt: book.acquiredAt })),
@@ -111,7 +115,9 @@ export function createReviewSummaryClient(config: AiReviewState, fetchImpl: type
             language: "zh-CN",
             title: facts.period === "week" ? "本周收获" : "本月收获",
             tone: "pixel-adventure-journal",
-            style: "轻快可爱的像素探险日志；先写点亮进度，再提炼具体收获，最后连接徽章成长与遗留行动",
+            style: facts.period === "week"
+              ? "轻快可爱的像素探险日志；准确写出完成项数，再提炼具体收获，最后连接徽章成长；不讨论未完成或逾期"
+              : "轻快可爱的像素探险日志；先写点亮进度，再提炼具体收获，最后连接徽章成长与遗留行动",
             format: "2 个短段落，160—260 个汉字，不使用 Markdown、列表或表情符号",
             factualOnly: true,
           },
