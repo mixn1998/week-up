@@ -15,15 +15,22 @@ $arguments = "-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -Window
 
 $action = New-ScheduledTaskAction -Execute $powerShellExe -Argument $arguments -WorkingDirectory (Split-Path -Parent $PSScriptRoot)
 $trigger = New-ScheduledTaskTrigger -AtLogOn -User $currentUser
-$principal = New-ScheduledTaskPrincipal -UserId $currentUser -LogonType Interactive -RunLevel Limited
+$principal = New-ScheduledTaskPrincipal -UserId $currentUser -LogonType Interactive -RunLevel Highest
 $settings = New-ScheduledTaskSettingsSet `
   -RestartCount 999 `
   -RestartInterval (New-TimeSpan -Minutes 1) `
   -StartWhenAvailable `
+  -DontStopOnIdleEnd `
+  -DisallowHardTerminate `
   -MultipleInstances IgnoreNew `
   -ExecutionTimeLimit ([TimeSpan]::Zero) `
   -AllowStartIfOnBatteries `
   -DontStopIfGoingOnBatteries
+
+$existingTask = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
+if ($null -ne $existingTask -and $existingTask.State -eq "Running") {
+  Stop-ScheduledTask -TaskName $TaskName -ErrorAction Stop
+}
 
 Register-ScheduledTask `
   -TaskName $TaskName `
