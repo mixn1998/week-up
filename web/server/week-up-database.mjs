@@ -3,7 +3,7 @@ import { mkdir, readdir, unlink } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { backup, DatabaseSync } from "node:sqlite";
 
-import { createEmptyWeekUpState, dispatchWeekUp, migrateWeekUpState, WEEK_UP_SCHEMA_VERSION } from "../lib/week-up-domain.ts";
+import { createEmptyWeekUpState, dispatchWeekUp, migrateWeekUpState, upgradeWeeklyReviewSettlements, WEEK_UP_SCHEMA_VERSION } from "../lib/week-up-domain.ts";
 import { createLearningMoreDelta } from "../lib/learning-more-delta.ts";
 import { createWeekUpStatePatch } from "../lib/state-patch.ts";
 
@@ -146,6 +146,11 @@ export async function createWeekUpDatabase(databasePath) {
   const persistedSchemaVersion = JSON.parse(database.prepare("SELECT state_json FROM week_up_snapshots ORDER BY revision DESC LIMIT 1").get().state_json).schemaVersion;
   let migrationBackupPath;
   if (hybridVersion !== HYBRID_MODEL_VERSION || persistedSchemaVersion !== WEEK_UP_SCHEMA_VERSION) {
+    currentState = {
+      ...currentState,
+      schemaVersion: WEEK_UP_SCHEMA_VERSION,
+      settlements: upgradeWeeklyReviewSettlements(currentState.settlements, persistedSchemaVersion, currentState),
+    };
     const eventCount = database.prepare("SELECT COUNT(*) AS count FROM week_up_events").get().count;
     if (currentState.revision > 0 || eventCount > 0) {
       const stamp = new Date().toISOString().replace(/[:.]/g, "-");

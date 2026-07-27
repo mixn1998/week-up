@@ -3,15 +3,16 @@ import test from "node:test";
 
 import { buildReviewPrompt, createAiReviewService } from "../server/ai-review-service.mjs";
 
-const facts = { period: "week", startDate: "2026-07-20", endDate: "2026-07-26" };
+const facts = { period: "week", startDate: "2026-07-20", endDate: "2026-07-26", completedCount: 41 };
 
 test("uses the selected pixel adventure journal voice without relaxing factual constraints", () => {
   const prompt = buildReviewPrompt({ ...facts, completedContent: [], incompleteContent: [], attributeGains: [], badgeUpgrades: [], skillbooks: [] });
   assert.match(prompt, /像素探险日志/);
-  assert.match(prompt, /本周点亮了/);
+  assert.match(prompt, /本周实际完成项数为 41/);
   assert.match(prompt, /徽章仍在积蓄经验/);
   assert.match(prompt, /禁止虚构/);
   assert.match(prompt, /不要出现怪物、战斗、金币/);
+  assert.doesNotMatch(prompt, /还有几格暂未点亮|没有遗留行动/);
 });
 
 test("uses Codex CLI by default and reports the actual model", async () => {
