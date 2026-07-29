@@ -328,8 +328,33 @@ test("opens full atlas badges into one desktop attribute analytics page", async 
   assert.match(analytics, /每周增量/);
   assert.match(analytics, /来源构成/);
   assert.match(analytics, /增长节奏/);
-  assert.match(analytics, /继续加载更早记录/);
+  assert.match(analytics, /const \[visibleSourceCount, setVisibleSourceCount\] = useState\(5\)/);
+  assert.match(analytics, /展开其余/);
+  assert.match(analytics, /收起来源记录/);
   assert.doesNotMatch(analytics, /下一页 →/);
+});
+
+test("adds one desktop all-attribute overview beside individual badge analytics", async () => {
+  const page = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
+  assert.match(page, /function AttributeOverviewView/);
+  assert.match(page, /projectAttributeOverview/);
+  assert.match(page, /属性总览/);
+  assert.match(page, /属性分类构成/);
+  assert.match(page, /徽章等级分布/);
+  assert.match(page, /全属性累计趋势/);
+  assert.match(page, /近 30 日增长排行/);
+  assert.match(page, /analyticsEnabled && section === "badges"/);
+});
+
+test("renders weekly gains inside a fixed chart slot and does not draw a purple badge frame", async () => {
+  const [page, css] = await Promise.all([
+    readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
+  ]);
+  assert.match(page, /<i><span style=\{\{ height:/);
+  assert.match(css, /\.attribute-week-bars > div \{[^}]*grid-template-rows:/);
+  assert.match(css, /\.attribute-week-bars i > span/);
+  assert.doesNotMatch(css, /\.badge-card--openable:hover,[^{]*\{[^}]*outline:/);
 });
 
 test("only full atlas badges receive the analytics open action", async () => {

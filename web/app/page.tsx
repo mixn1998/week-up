@@ -13,7 +13,7 @@ import {
 import { clusterCalendarPlans, projectCalendarCluster } from "../lib/calendar-layout";
 import { CATEGORY_PALETTE, colorForCategory, paletteColorValue, readableTextColor } from "../lib/category-palette";
 import { aggregateProjectCategoryContributions } from "../lib/project-contributions";
-import { projectAttributeAnalytics, type AttributeXpSource } from "../lib/attribute-analytics";
+import { projectAttributeAnalytics, projectAttributeOverview, type AttributeXpSource } from "../lib/attribute-analytics";
 import { groupPlansByProjectCategory } from "../lib/plan-category-groups";
 import { isLearningMoreCourseBundlePlan, isLearningMoreCourseComplete, isLearningMoreCoursePlan, takeVisibleGroupedRows } from "../lib/weekly-action-visibility";
 import { comparePlansByExecution, earliestPlanByExecution } from "../lib/weekly-action-order";
@@ -948,12 +948,46 @@ function ActionConfigView({ attributes, attributeCategories, projectCategories, 
   </div>;
 }
 
+function AttributeOverviewView({ attributes, state, onBack, onOpenAttribute }: { attributes: Attribute[]; state: WeekUpState; onBack: () => void; onOpenAttribute: (attributeId: string) => void }) {
+  const overview = useMemo(() => projectAttributeOverview(state), [state]);
+  const attributeById = new Map(attributes.map((attribute) => [attribute.id, attribute]));
+  const trendMaximum = Math.max(1, ...overview.thirtyDay.map((point) => point.totalXp));
+  const trendPoints = overview.thirtyDay.map((point, index) => {
+    const x = 34 + (index / 29) * 572;
+    const y = 150 - (point.totalXp / trendMaximum) * 124;
+    return `${x.toFixed(1)},${y.toFixed(1)}`;
+  }).join(" ");
+  const categoryMaximum = Math.max(1, ...overview.categories.map((category) => category.totalXp));
+  const levelMaximum = Math.max(1, ...overview.levelDistribution.map((level) => level.count));
+  const growthMaximum = Math.max(1, ...overview.attributes.map((attribute) => attribute.thirtyDayGain));
+
+  return <div className="view attribute-overview-view">
+    <div className="attribute-analytics-title"><div><button className="analytics-back" type="button" onClick={onBack}>← 返回成就图鉴</button><span className="eyebrow">ATTRIBUTE OVERVIEW</span><h1>全属性数据总览</h1></div></div>
+    <section className="attribute-overview-hero pixel-card">
+      <div><span className="eyebrow">FULL ATTRIBUTE MAP</span><h2>看见属性存量，也看见最近的增长方向</h2><p>总览使用与单枚徽章相同的当前有效净 XP 来源，撤销记录不会继续计入。</p></div>
+      <div className="attribute-overview-kpis">
+        <div><span>属性总数</span><strong>{overview.attributeCount}</strong></div>
+        <div><span>全属性总 XP</span><strong>{overview.totalXp}</strong></div>
+        <div><span>近 30 日增长</span><strong>+{overview.thirtyDayGain}</strong></div>
+        <div><span>活跃属性</span><strong>{overview.activeAttributeCount}</strong></div>
+      </div>
+    </section>
+    <div className="attribute-analytics-grid">
+      <section className="attribute-analytics-panel pixel-card"><div className="analytics-panel-heading"><div><span className="eyebrow">ATTRIBUTE MIX</span><h2>属性分类构成</h2></div><strong>{overview.categories.length} 类</strong></div><div className="overview-category-bars">{overview.categories.map((category) => <div key={category.category}><header><b>{category.category}</b><span>{category.attributeCount} 项 · {category.totalXp} XP</span></header><i><em style={{ width: `${(category.totalXp / categoryMaximum) * 100}%`, background: colorForCategory(category.category) }} /></i><small>近 30 日 +{category.thirtyDayGain} XP</small></div>)}</div></section>
+      <section className="attribute-analytics-panel pixel-card"><div className="analytics-panel-heading"><div><span className="eyebrow">LEVEL DISTRIBUTION</span><h2>徽章等级分布</h2></div><strong>{overview.attributeCount} 枚</strong></div><div className="overview-level-bars">{overview.levelDistribution.map((level) => <div key={level.label}><b>{level.count}</b><i><em style={{ height: `${level.count === 0 ? 0 : Math.max(10, (level.count / levelMaximum) * 100)}%` }} /></i><small>{level.label}</small></div>)}</div></section>
+      <section className="attribute-analytics-panel pixel-card"><div className="analytics-panel-heading"><div><span className="eyebrow">30 DAY TOTAL</span><h2>全属性累计趋势</h2></div><strong>+{overview.thirtyDayGain} XP</strong></div>{overview.thirtyDay.length > 0 ? <svg className="attribute-trend-chart" viewBox="0 0 640 180" role="img" aria-label="全属性最近30日累计XP趋势"><line x1="34" y1="26" x2="606" y2="26" /><line x1="34" y1="67" x2="606" y2="67" /><line x1="34" y1="108" x2="606" y2="108" /><line x1="34" y1="150" x2="606" y2="150" /><polyline points={trendPoints} /><text x="34" y="173">{overview.thirtyDay[0]?.localDate.slice(5)}</text><text x="570" y="173">{overview.thirtyDay.at(-1)?.localDate.slice(5)}</text></svg> : <div className="mini-empty">还没有可分析的属性记录。</div>}</section>
+      <section className="attribute-analytics-panel pixel-card"><div className="analytics-panel-heading"><div><span className="eyebrow">TOP GROWTH</span><h2>近 30 日增长排行</h2></div><strong>TOP 6</strong></div><div className="overview-growth-rank">{overview.attributes.slice(0, 6).map((item, index) => { const attribute = attributeById.get(item.attributeId); return <button type="button" key={item.attributeId} onClick={() => onOpenAttribute(item.attributeId)}><span>{String(index + 1).padStart(2, "0")}</span><b>{item.name}</b><i><em style={{ width: `${item.thirtyDayGain === 0 ? 0 : Math.max(5, (item.thirtyDayGain / growthMaximum) * 100)}%`, background: attribute ? badgeColorValue(attribute.color) : "var(--violet)" }} /></i><strong>+{item.thirtyDayGain}</strong></button>; })}</div></section>
+    </div>
+    <section className="attribute-overview-table pixel-card"><div className="analytics-panel-heading"><div><span className="eyebrow">ALL ATTRIBUTES</span><h2>全属性明细</h2></div><strong>本月 +{overview.monthGain} XP</strong></div><div><header><span>属性</span><span>分类</span><span>等级</span><span>当前 XP</span><span>近 30 日</span></header>{overview.attributes.map((item) => { const attribute = attributeById.get(item.attributeId); return <button type="button" key={item.attributeId} onClick={() => onOpenAttribute(item.attributeId)}><span><i style={{ background: attribute ? badgeColorValue(attribute.color) : "var(--violet)" }} />{item.name}</span><span>{item.category}</span><span>LV.{item.level}</span><strong>{item.totalXp}</strong><em>+{item.thirtyDayGain}</em></button>; })}</div></section>
+  </div>;
+}
+
 function AttributeAnalyticsView({ attribute, state, onBack }: { attribute: Attribute; state: WeekUpState; onBack: () => void }) {
   const analytics = useMemo(() => projectAttributeAnalytics(state, attribute.id), [state, attribute.id]);
   const progress = levelFromTotalXp(analytics.totalXp);
   const [sourceFilter, setSourceFilter] = useState<"all" | "month" | "week">("all");
   const [sourceMonth, setSourceMonth] = useState("all");
-  const [visibleSourceCount, setVisibleSourceCount] = useState(20);
+  const [visibleSourceCount, setVisibleSourceCount] = useState(5);
   const today = currentLocalDate();
   const weekRange = currentWeekRange();
   const monthKey = today.slice(0, 7);
@@ -991,7 +1025,7 @@ function AttributeAnalyticsView({ attribute, state, onBack }: { attribute: Attri
   const changeSourceFilter = (next: "all" | "month" | "week") => {
     setSourceFilter(next);
     setSourceMonth("all");
-    setVisibleSourceCount(20);
+    setVisibleSourceCount(5);
   };
 
   return (
@@ -1006,15 +1040,15 @@ function AttributeAnalyticsView({ attribute, state, onBack }: { attribute: Attri
       </section>
       <div className="attribute-analytics-grid">
         <section className="attribute-analytics-panel pixel-card"><div className="analytics-panel-heading"><div><span className="eyebrow">30 DAY TREND</span><h2>30 日累计趋势</h2></div><strong>{analytics.thirtyDay.comparisonLabel}</strong></div><svg className="attribute-trend-chart" viewBox="0 0 640 180" role="img" aria-label={`${attribute.name}最近30日累计XP趋势`}><line x1="34" y1="26" x2="606" y2="26" /><line x1="34" y1="67" x2="606" y2="67" /><line x1="34" y1="108" x2="606" y2="108" /><line x1="34" y1="150" x2="606" y2="150" /><polyline points={trendPoints} /><text x="34" y="173">{analytics.thirtyDay.points[0]?.localDate.slice(5)}</text><text x="570" y="173">{analytics.thirtyDay.points.at(-1)?.localDate.slice(5)}</text></svg></section>
-        <section className="attribute-analytics-panel pixel-card"><div className="analytics-panel-heading"><div><span className="eyebrow">WEEKLY DELTA</span><h2>每周增量</h2></div><strong>4 周</strong></div><div className="attribute-week-bars">{analytics.weeklyGains.map((week, index) => <div className={index === analytics.weeklyGains.length - 1 ? "is-current" : ""} key={week.startDate}><b>+{week.amount} XP</b><i style={{ height: `${Math.max(6, (week.amount / weeklyMaximum) * 100)}%` }} /><small>{index === analytics.weeklyGains.length - 1 ? "本周" : week.startDate.slice(5)}</small></div>)}</div></section>
+        <section className="attribute-analytics-panel pixel-card"><div className="analytics-panel-heading"><div><span className="eyebrow">WEEKLY DELTA</span><h2>每周增量</h2></div><strong>4 周</strong></div><div className="attribute-week-bars">{analytics.weeklyGains.map((week, index) => <div className={index === analytics.weeklyGains.length - 1 ? "is-current" : ""} key={week.startDate}><b>+{week.amount} XP</b><i><span style={{ height: `${week.amount === 0 ? 0 : Math.max(8, (week.amount / weeklyMaximum) * 100)}%` }} /></i><small>{index === analytics.weeklyGains.length - 1 ? "本周" : week.startDate.slice(5)}</small></div>)}</div></section>
         <section className="attribute-analytics-panel pixel-card"><div className="analytics-panel-heading"><div><span className="eyebrow">CATEGORY SOURCES</span><h2>来源构成</h2></div><strong>{analytics.totalXp} XP</strong></div>{analytics.categoryGains.length === 0 ? <div className="mini-empty">还没有可分析的 XP 来源。</div> : <div className="attribute-source-composition"><div className="attribute-source-donut" style={{ background: categoryGradient }}><span>{analytics.totalXp}<small>XP</small></span></div><div>{analytics.categoryGains.map((category) => <p key={category.category}><i style={{ background: colorForCategory(category.category) }} /><b>{category.category}</b><span>{category.amount} XP · {Math.round((category.amount / categoryTotal) * 100)}%</span></p>)}</div></div>}</section>
         <section className="attribute-analytics-panel pixel-card"><div className="analytics-panel-heading"><div><span className="eyebrow">ACTIVITY RHYTHM</span><h2>增长节奏</h2></div><strong>{analytics.activeDates.length} 个活跃日</strong></div><div className="attribute-activity-labels"><span>30 天前</span><span>今天</span></div><div className="attribute-activity-grid">{analytics.thirtyDay.points.map((point) => <i key={point.localDate} title={`${point.localDate} +${point.gainedXp} XP`} style={{ "--activity-level": point.gainedXp === 0 ? 0 : Math.max(0.2, point.gainedXp / activityMaximum) } as CSSProperties} className={point.gainedXp > 0 ? "is-active" : ""} />)}</div><div className="attribute-activity-foot"><span>颜色越深，单日获得 XP 越多</span><span>最长连续增长 <b>{analytics.longestStreak} 天</b></span></div></section>
       </div>
       <section className="attribute-source-ledger pixel-card">
-        <div className="attribute-source-heading"><div><span className="eyebrow">EFFECTIVE XP SOURCES</span><h2>XP 来源记录</h2></div><div className="attribute-source-controls"><select aria-label="定位来源年月" value={sourceMonth} onChange={(event) => { setSourceMonth(event.target.value); setSourceFilter("all"); setVisibleSourceCount(20); }}><option value="all">定位到年月</option>{monthOptions.map((month) => <option value={month} key={month}>{month.replace("-", " 年 ")} 月</option>)}</select><div>{(["all", "month", "week"] as const).map((filter) => <button className={sourceFilter === filter ? "active" : ""} type="button" key={filter} onClick={() => changeSourceFilter(filter)}>{filter === "all" ? "全部" : filter === "month" ? "本月" : "本周"}</button>)}</div></div></div>
+        <div className="attribute-source-heading"><div><span className="eyebrow">EFFECTIVE XP SOURCES</span><h2>XP 来源记录</h2></div><div className="attribute-source-controls"><select aria-label="定位来源年月" value={sourceMonth} onChange={(event) => { setSourceMonth(event.target.value); setSourceFilter("all"); setVisibleSourceCount(5); }}><option value="all">定位到年月</option>{monthOptions.map((month) => <option value={month} key={month}>{month.replace("-", " 年 ")} 月</option>)}</select><div>{(["all", "month", "week"] as const).map((filter) => <button className={sourceFilter === filter ? "active" : ""} type="button" key={filter} onClick={() => changeSourceFilter(filter)}>{filter === "all" ? "全部" : filter === "month" ? "本月" : "本周"}</button>)}</div></div></div>
         <div className="attribute-source-table"><div className="attribute-source-row attribute-source-row--head"><span>完成日期</span><span>行动</span><span>项目 / 课程</span><span>项目分类</span><span>有效 XP</span></div>{sourceGroups.map(([month, sources]) => <div className="attribute-source-month" key={month}><header><b>{month.replace("-", " 年 ")} 月</b><span>{sources.length} 条来源 · +{sources.reduce((sum, source) => sum + source.amount, 0)} XP</span></header>{sources.map((source) => <div className="attribute-source-row" key={source.completionFactId}><time>{localDateInShanghai(source.completedAt).slice(5)} {new Intl.DateTimeFormat("zh-CN", { timeZone: "Asia/Shanghai", hour: "2-digit", minute: "2-digit", hour12: false }).format(new Date(source.completedAt))}</time><b>{source.planTitle}</b><span>{source.projectOrCourse}</span><em style={{ "--source-category": colorForCategory(source.projectCategory) } as CSSProperties}>{source.projectCategory}</em><strong>+{source.amount}</strong></div>)}</div>)}</div>
         {visibleSources.length === 0 && <div className="mini-empty">当前筛选范围内没有有效 XP 来源。</div>}
-        {visibleSourceCount < filteredSources.length && <button className="attribute-source-more" type="button" onClick={() => setVisibleSourceCount((current) => current + 20)}>继续加载更早记录 ↓</button>}
+        {filteredSources.length > 5 && <button className="attribute-source-more" type="button" onClick={() => setVisibleSourceCount((current) => current > 5 ? 5 : filteredSources.length)}>{visibleSourceCount > 5 ? "收起来源记录 ↑" : `展开其余 ${filteredSources.length - 5} 条记录 ↓`}</button>}
         <p className="attribute-source-meta">已显示 {visibleSources.length} 条，共 {filteredSources.length} 条当前有效来源</p>
       </section>
     </div>
@@ -1026,12 +1060,16 @@ function GrowthView({ attributes, skillbooks, goals, state }: { attributes: Attr
   const [selectedCategory, setSelectedCategory] = useState("all");
   const [expandedCategories, setExpandedCategories] = useState<string[]>([]);
   const [selectedAttributeId, setSelectedAttributeId] = useState<string | null>(null);
+  const [overviewOpen, setOverviewOpen] = useState(false);
   const [analyticsEnabled, setAnalyticsEnabled] = useState(false);
   useEffect(() => {
     const query = window.matchMedia("(min-width: 821px)");
     const sync = () => {
       setAnalyticsEnabled(query.matches);
-      if (!query.matches) setSelectedAttributeId(null);
+      if (!query.matches) {
+        setSelectedAttributeId(null);
+        setOverviewOpen(false);
+      }
     };
     sync();
     query.addEventListener("change", sync);
@@ -1057,9 +1095,10 @@ function GrowthView({ attributes, skillbooks, goals, state }: { attributes: Attr
   }));
   const selectedAttribute = attributes.find((attribute) => attribute.id === selectedAttributeId);
   if (selectedAttribute) return <AttributeAnalyticsView attribute={selectedAttribute} state={state} onBack={() => setSelectedAttributeId(null)} />;
+  if (overviewOpen) return <AttributeOverviewView attributes={attributes} state={state} onBack={() => setOverviewOpen(false)} onOpenAttribute={setSelectedAttributeId} />;
   return (
     <div className="view">
-      <div className="page-title"><div><span className="eyebrow">PIXEL ATLAS</span><h1>成就图鉴</h1></div><div className="page-title__actions"><span className="collection-count">{section === "badges" ? `${attributes.length} 枚徽章` : section === "skillbooks" ? `${skillbooks.length} 本技能书` : `${goals.filter((goal) => goal.archivedAt).length} 个里程碑`}</span></div></div>
+      <div className="page-title"><div><span className="eyebrow">PIXEL ATLAS</span><h1>成就图鉴</h1></div><div className="page-title__actions">{analyticsEnabled && section === "badges" && <button className="pixel-button pixel-button--cyan" type="button" onClick={() => setOverviewOpen(true)}>▦ 属性总览</button>}<span className="collection-count">{section === "badges" ? `${attributes.length} 枚徽章` : section === "skillbooks" ? `${skillbooks.length} 本技能书` : `${goals.filter((goal) => goal.archivedAt).length} 个里程碑`}</span></div></div>
       <div className="growth-subtabs" role="tablist" aria-label="成就图鉴分类"><button role="tab" aria-selected={section === "badges"} className={section === "badges" ? "active" : ""} onClick={() => setSection("badges")}><span>◆</span><div><small>ATTRIBUTE BADGES</small><b>属性徽章</b></div><em>{attributes.length}</em></button><button role="tab" aria-selected={section === "skillbooks"} className={section === "skillbooks" ? "active" : ""} onClick={() => setSection("skillbooks")}><span>▥</span><div><small>SKILLBOOKS</small><b>技能书架</b></div><em>{skillbooks.length}</em></button><button role="tab" aria-selected={section === "milestones"} className={section === "milestones" ? "active" : ""} onClick={() => setSection("milestones")}><span>⌁</span><div><small>JOURNEY MAP</small><b>里程地图</b></div><em>{goals.filter((goal) => goal.period === "month" || Boolean(goal.archivedAt)).length}</em></button></div>
       {section === "badges" ? <>{attributes.length > 0 && <div className="category-summary" aria-label="按属性类别筛选"><button className={`category-summary__item category-summary__item--all${activeCategory === "all" ? " active" : ""}`} type="button" aria-pressed={activeCategory === "all"} onClick={() => setSelectedCategory("all")}><i />全部<b>{attributes.length}</b></button>{categories.map((category) => <button className={`category-summary__item${activeCategory === category ? " active" : ""}`} type="button" aria-pressed={activeCategory === category} style={{ "--category-accent": colorForCategory(category) } as CSSProperties} key={category} onClick={() => setSelectedCategory(category)}><i />{category}<b>{attributes.filter((attribute) => (attribute.category ?? "未分类") === category).length}</b></button>)}</div>}
       {attributes.length > 0 ? <div className="attribute-catalog">{groupedAttributes.map((group, index) => {

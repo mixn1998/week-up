@@ -1,4 +1,5 @@
 import { shanghaiDate } from "./execution-policy.ts";
+import { levelFromTotalXp } from "./demo-model.ts";
 import type { WeekUpState } from "./week-up-domain.ts";
 
 export type AttributeXpSource = Readonly<{
@@ -42,6 +43,28 @@ export type AttributeAnalytics = Readonly<{
   categoryGains: readonly AttributeCategoryGain[];
   activeDates: readonly string[];
   longestStreak: number;
+}>;
+
+export type AttributeOverviewItem = Readonly<{
+  attributeId: string;
+  name: string;
+  category: string;
+  totalXp: number;
+  monthGain: number;
+  thirtyDayGain: number;
+  level: number;
+}>;
+
+export type AttributeOverview = Readonly<{
+  attributeCount: number;
+  totalXp: number;
+  monthGain: number;
+  thirtyDayGain: number;
+  activeAttributeCount: number;
+  attributes: readonly AttributeOverviewItem[];
+  categories: readonly Readonly<{ category: string; totalXp: number; attributeCount: number; thirtyDayGain: number }>[];
+  levelDistribution: readonly Readonly<{ label: string; count: number }>[];
+  thirtyDay: readonly AttributeDailyPoint[];
 }>;
 
 function shiftDate(localDate: string, days: number): string {
@@ -179,4 +202,62 @@ export function projectAttributeAnalytics(
   );
 
   return { sources, ...buildAttributeAggregates(sources, at) };
+}
+
+export function projectAttributeOverview(state: WeekUpState, at = new Date()): AttributeOverview {
+  const analyticsByAttribute = new Map(state.attributes.map((attribute) => [
+    attribute.id,
+    projectAttributeAnalytics(state, attribute.id, at),
+  ]));
+  const attributes = state.attributes.map<AttributeOverviewItem>((attribute) => {
+    const analytics = analyticsByAttribute.get(attribute.id)!;
+    return {
+      attributeId: attribute.id,
+      name: attribute.name,
+      category: attribute.category?.trim() || "未分类",
+      totalXp: analytics.totalXp,
+      monthGain: analytics.monthGain,
+      thirtyDayGain: analytics.thirtyDay.points.reduce((sum, point) => sum + point.gainedXp, 0),
+      level: levelFromTotalXp(analytics.totalXp).level,
+    };
+  });
+  const categories = [...attributes.reduce((groups, attribute) => {
+    const current = groups.get(attribute.category) ?? { category: attribute.category, totalXp: 0, attributeCount: 0, thirtyDayGain: 0 };
+    groups.set(attribute.category, {
+      category: attribute.category,
+      totalXp: current.totalXp + attribute.totalXp,
+      attributeCount: current.attributeCount + 1,
+      thirtyDayGain: current.thirtyDayGain + attribute.thirtyDayGain,
+    });
+    return groups;
+  }, new Map<string, { category: string; totalXp: number; attributeCount: number; thirtyDayGain: number }>()).values()]
+    .sort((left, right) => right.totalXp - left.totalXp || left.category.localeCompare(right.category, "zh-CN"));
+  const highestLevel = Math.max(1, ...attributes.map((attribute) => attribute.level));
+  const levelDistribution = Array.from({ length: highestLevel }, (_, index) => ({
+    label: `LV.${index + 1}`,
+    count: attributes.filter((attribute) => attribute.level === index + 1).length,
+  }));
+  const firstAnalytics = state.attributes[0] ? analyticsByAttribute.get(state.attributes[0].id) : undefined;
+  const thirtyDay = (firstAnalytics?.thirtyDay.points ?? []).map((point, index) => ({
+    localDate: point.localDate,
+    gainedXp: attributes.reduce((sum, attribute) => {
+      const analytics = analyticsByAttribute.get(attribute.attributeId)!;
+      return sum + (analytics.thirtyDay.points[index]?.gainedXp ?? 0);
+    }, 0),
+    totalXp: attributes.reduce((sum, attribute) => {
+      const analytics = analyticsByAttribute.get(attribute.attributeId)!;
+      return sum + (analytics.thirtyDay.points[index]?.totalXp ?? 0);
+    }, 0),
+  }));
+  return {
+    attributeCount: attributes.length,
+    totalXp: attributes.reduce((sum, attribute) => sum + attribute.totalXp, 0),
+    monthGain: attributes.reduce((sum, attribute) => sum + attribute.monthGain, 0),
+    thirtyDayGain: attributes.reduce((sum, attribute) => sum + attribute.thirtyDayGain, 0),
+    activeAttributeCount: attributes.filter((attribute) => attribute.thirtyDayGain > 0).length,
+    attributes: [...attributes].sort((left, right) => right.thirtyDayGain - left.thirtyDayGain || right.totalXp - left.totalXp || left.name.localeCompare(right.name, "zh-CN")),
+    categories,
+    levelDistribution,
+    thirtyDay,
+  };
 }

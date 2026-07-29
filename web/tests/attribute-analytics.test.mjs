@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { projectAttributeAnalytics } from "../lib/attribute-analytics.ts";
+import { projectAttributeAnalytics, projectAttributeOverview } from "../lib/attribute-analytics.ts";
 import { createEmptyWeekUpState } from "../lib/week-up-domain.ts";
 
 function analyticsState() {
@@ -88,4 +88,25 @@ test("keeps orphaned positive ledger groups visible as historical sources", () =
 
   assert.equal(analytics.sources.find((source) => source.completionFactId === "fact-missing")?.planTitle, "历史完成记录");
   assert.equal(analytics.sources.reduce((sum, source) => sum + source.amount, 0), 12);
+});
+
+test("projects one all-attribute overview from the same effective XP sources", () => {
+  const { state } = analyticsState();
+  const overview = projectAttributeOverview({
+    ...state,
+    attributes: [
+      ...state.attributes,
+      { id: "attribute-empty", name: "创作", category: "技能", icon: "mark-02", color: "purple", note: "", pinned: false, createdAt: "2026-07-01T00:00:00+08:00" },
+    ],
+  }, new Date("2026-07-29T12:00:00+08:00"));
+
+  assert.equal(overview.attributeCount, 2);
+  assert.equal(overview.totalXp, 10);
+  assert.equal(overview.thirtyDayGain, 10);
+  assert.equal(overview.activeAttributeCount, 1);
+  assert.deepEqual(overview.categories, [
+    { category: "技能", totalXp: 10, attributeCount: 2, thirtyDayGain: 10 },
+  ]);
+  assert.equal(overview.thirtyDay.at(-1).totalXp, overview.totalXp);
+  assert.deepEqual(overview.attributes.map((attribute) => attribute.name), ["管理", "创作"]);
 });
