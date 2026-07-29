@@ -965,7 +965,7 @@ function AttributeOverviewView({ attributes, state, onBack, onOpenAttribute }: {
   const totalRankedAttributes = [...overview.attributes].sort((left, right) => right.totalXp - left.totalXp || left.name.localeCompare(right.name, "zh-CN"));
   const totalMaximum = Math.max(1, ...totalRankedAttributes.map((attribute) => attribute.totalXp));
   const totalChartSlotCount = Math.max(1, totalRankedAttributes.length);
-  const totalChartWidth = `${(totalChartSlotCount / 30) * 100}%`;
+  const totalChartWidth = totalChartSlotCount <= 30 ? "100%" : `${(totalChartSlotCount / 30) * 100}%`;
   const visibleDetails = detailsOpen ? overview.attributes : overview.attributes.slice(0, 8);
 
   return <div className="view attribute-overview-view">
