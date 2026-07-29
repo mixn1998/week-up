@@ -324,6 +324,9 @@ test("opens full atlas badges into one desktop attribute analytics page", async 
   assert.match(analytics, /function AttributeAnalyticsView/);
   assert.match(analytics, /projectAttributeAnalytics/);
   assert.match(analytics, /返回成就图鉴/);
+  assert.match(analytics, /attribute-analytics-nav/);
+  assert.doesNotMatch(analytics, /attribute-analytics-title/);
+  assert.doesNotMatch(analytics, /ATTRIBUTE ANALYTICS|徽章增量分析/);
   assert.match(analytics, /30 日累计趋势/);
   assert.match(analytics, /每周增量/);
   assert.match(analytics, /来源构成/);
@@ -345,6 +348,16 @@ test("adds one desktop all-attribute overview beside individual badge analytics"
   assert.match(page, /function AttributeOverviewView/);
   assert.match(page, /projectAttributeOverview/);
   assert.equal(overview.match(/全属性数据总览/g)?.length, 1);
+  assert.match(overview, /ATTRIBUTE OVERVIEW/);
+  assert.ok(
+    overview.indexOf('className="attribute-analytics-nav"') < overview.indexOf('className="attribute-overview-hero pixel-card"'),
+    "overview back navigation should sit above the overview banner",
+  );
+  const overviewHero = overview.slice(
+    overview.indexOf('className="attribute-overview-hero pixel-card"'),
+    overview.indexOf('<div className="attribute-analytics-grid">'),
+  );
+  assert.doesNotMatch(overviewHero, /analytics-back/);
   assert.doesNotMatch(overview, /FULL ATTRIBUTE MAP|看见属性存量|总览使用与单枚徽章/);
   assert.match(overview, /overview-category-donut/);
   assert.match(overview, /overview-level-distribution/);

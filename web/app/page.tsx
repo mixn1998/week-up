@@ -967,8 +967,11 @@ function AttributeOverviewView({ attributes, state, onBack, onOpenAttribute }: {
   const visibleDetails = detailsOpen ? overview.attributes : overview.attributes.slice(0, 8);
 
   return <div className="view attribute-overview-view">
+    <div className="attribute-analytics-nav">
+      <button className="analytics-back" type="button" onClick={onBack}>← 返回成就图鉴</button>
+    </div>
     <section className="attribute-overview-hero pixel-card">
-      <div className="attribute-overview-hero__title"><button className="analytics-back" type="button" onClick={onBack}>← 返回成就图鉴</button><h1>全属性数据总览</h1></div>
+      <div className="attribute-overview-hero__title"><span className="eyebrow">ATTRIBUTE OVERVIEW</span><h1>全属性数据总览</h1></div>
       <div className="attribute-overview-kpis">
         <div><span>属性总数</span><strong>{overview.attributeCount}</strong></div>
         <div><span>全属性总 XP</span><strong>{overview.totalXp}</strong></div>
@@ -1033,8 +1036,8 @@ function AttributeAnalyticsView({ attribute, state, onBack }: { attribute: Attri
 
   return (
     <div className="view attribute-analytics-view">
-      <div className="attribute-analytics-title">
-        <div><button className="analytics-back" type="button" onClick={onBack}>← 返回成就图鉴</button><span className="eyebrow">ATTRIBUTE ANALYTICS</span><h1>徽章增量分析</h1></div>
+      <div className="attribute-analytics-nav">
+        <button className="analytics-back" type="button" onClick={onBack}>← 返回成就图鉴</button>
       </div>
       <section className="attribute-analytics-hero pixel-card" style={{ "--badge-color": badgeColorValue(attribute.color), "--badge-text": readableTextColor(badgeColorValue(attribute.color)) } as CSSProperties}>
         <div className="badge-sprite"><span><BadgeSymbol icon={attribute.icon} /></span></div>
