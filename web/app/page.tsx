@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { FormEvent, useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
 import {
   levelFromTotalXp,
   movingAverage,
@@ -13,10 +13,11 @@ import {
 import { clusterCalendarPlans, projectCalendarCluster } from "../lib/calendar-layout";
 import { CATEGORY_PALETTE, colorForCategory, paletteColorValue, readableTextColor } from "../lib/category-palette";
 import { aggregateProjectCategoryContributions } from "../lib/project-contributions";
+import { projectAttributeAnalytics, type AttributeXpSource } from "../lib/attribute-analytics";
 import { groupPlansByProjectCategory } from "../lib/plan-category-groups";
 import { isLearningMoreCourseBundlePlan, isLearningMoreCourseComplete, isLearningMoreCoursePlan, takeVisibleGroupedRows } from "../lib/weekly-action-visibility";
 import { comparePlansByExecution, earliestPlanByExecution } from "../lib/weekly-action-order";
-import { attributeGainsForCompletedDate, sortAttributeRewardsByAmount } from "../lib/attribute-gains";
+import { attributeGainsForCompletedDate, sortAttributeRewardsByAmount, totalAttributeGain } from "../lib/attribute-gains";
 import { selectDailyPlans, selectPeriodOverduePlans } from "../lib/daily-plan-selection";
 import { overdueDisposition } from "../lib/overdue-policy";
 import { summarizeWeekRouteDay } from "../lib/week-route-summary";
@@ -123,11 +124,26 @@ const INITIAL_ATTRIBUTES: Attribute[] = [];
 const INITIAL_PLANS: PlanItem[] = [];
 const INITIAL_WEIGHTS: WeightEntry[] = [];
 
-function PixelBadge({ attribute, compact = false, gain, onEdit }: { attribute: Attribute; compact?: boolean; gain?: number; onEdit?: () => void }) {
+function PixelBadge({ attribute, compact = false, gain, onEdit, onOpen }: { attribute: Attribute; compact?: boolean; gain?: number; onEdit?: () => void; onOpen?: () => void }) {
   const progress = levelFromTotalXp(attribute.totalXp);
   const badgeColor = badgeColorValue(attribute.color);
   return (
-    <article className={`badge-card badge-${attribute.color}${compact ? " badge-card--compact" : ""}`} style={{ "--badge-color": badgeColor, "--badge-text": readableTextColor(badgeColor) } as CSSProperties}>
+    <article
+      className={`badge-card badge-${attribute.color}${compact ? " badge-card--compact" : ""}${onOpen ? " badge-card--openable" : ""}`}
+      style={{ "--badge-color": badgeColor, "--badge-text": readableTextColor(badgeColor) } as CSSProperties}
+      {...(onOpen ? {
+        role: "button",
+        tabIndex: 0,
+        onClick: onOpen,
+        onKeyDown: (event: ReactKeyboardEvent<HTMLElement>) => {
+          if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            onOpen();
+          }
+        },
+        "aria-label": `查看${attribute.name}徽章增量分析`,
+      } : {})}
+    >
       <div className="badge-sprite" aria-hidden="true">
         <span><BadgeSymbol icon={attribute.icon} /></span>
       </div>
@@ -141,7 +157,7 @@ function PixelBadge({ attribute, compact = false, gain, onEdit }: { attribute: A
           <span style={{ width: `${progress.percent}%` }} />
         </div>
         <small>{progress.xpInLevel} / {progress.xpForNext} XP</small>
-        {onEdit && <button className="badge-edit" type="button" onClick={onEdit}>编辑徽章</button>}
+        {onEdit && <button className="badge-edit" type="button" onClick={(event) => { event.stopPropagation(); onEdit(); }}>编辑徽章</button>}
       </div>
     </article>
   );
@@ -406,6 +422,7 @@ function TodayView({
     .map((reward) => ({ attribute: attributes.find((attribute) => attribute.id === reward.attributeId), amount: reward.amount }))
     .filter((item): item is { attribute: Attribute; amount: number } => item.attribute !== undefined)
     .sort((left, right) => right.amount - left.amount || left.attribute.name.localeCompare(right.attribute.name, "zh-CN"));
+  const dailyTotalGain = totalAttributeGain(dailyGains);
   const visibleDailyGains = dailyGrowthOpen ? dailyGains : dailyGains.slice(0, 5);
   return (
     <div className="view today-view">
@@ -446,7 +463,7 @@ function TodayView({
 
         <aside className="today-side">
           <section className="pixel-card growth-snapshot">
-            <div className="section-heading section-heading--small"><div><span className="eyebrow">GROWTH</span><h2>今日属性值UP！</h2></div>{dailyGains.length > 5 ? <button className="week-xp week-xp--button" onClick={() => setDailyGrowthOpen((current) => !current)}>{dailyGrowthOpen ? "收起" : `展开全部 ${dailyGains.length} 项`}</button> : <span className="week-xp">今日 {dailyGains.length} 项</span>}</div>
+            <div className="section-heading section-heading--small"><div><span className="eyebrow">GROWTH</span><h2>今日属性值UP！</h2></div><div className="growth-heading-actions"><span className="growth-total">今日总属性增长 <b>+{dailyTotalGain} XP</b></span>{dailyGains.length > 5 ? <button className="week-xp week-xp--button" onClick={() => setDailyGrowthOpen((current) => !current)}>{dailyGrowthOpen ? "收起" : `展开全部 ${dailyGains.length} 项`}</button> : <span className="week-xp">今日 {dailyGains.length} 项</span>}</div></div>
             <div className="compact-badges">{dailyGains.length === 0 ? <div className="mini-empty">今天还没有属性提升，完成行动后会在这里点亮。</div> : visibleDailyGains.map(({ attribute, amount }) => <PixelBadge key={attribute.id} attribute={attribute} compact gain={amount} />)}</div>
           </section>
           <section className="pixel-card weight-widget">
@@ -580,14 +597,16 @@ function PeriodFacts({ period, range, plans, attributes, settlement, generatingH
       : plans.filter((plan) => !plan.completed && !plan.overdue);
   const missedCount = period === "week" && settlement ? settlement.overduePlanIds.length : missedPlans.length;
   const attributeGains = gainsForPlans(completedPlans, attributes, settlement);
-  const xp = settlement ? Object.values(settlement.attributeGains).reduce((sum, value) => sum + value, 0) : attributeGains.reduce((sum, item) => sum + item.amount, 0);
+  const xp = settlement
+    ? totalAttributeGain(Object.values(settlement.attributeGains).map((amount) => ({ amount })))
+    : totalAttributeGain(attributeGains);
   const visible = (items: readonly PlanItem[], open: boolean) => open ? items : items.slice(0, 5);
   return <section className="period-review-zone">
     <div className={`review-summary pixel-card review-summary--${period}`}><div><span>{settlement ? "FROZEN FACTS" : "LIVE PROGRESS"}</span><h2>{settlement ? "周期行动已经结算" : period === "week" ? "这周的行动正在积累" : "这个月的成长正在发生"}</h2></div><div className="review-numbers"><div><b>{completedCount}</b><span>完成行动</span></div><div><b>{missedCount}</b><span>{period === "week" ? "本周逾期" : "待完成"}</span></div><div><b>{xp}</b><span>属性 XP</span></div></div></div>
     <div className="review-grid">
       <section className="review-list pixel-card"><div className="section-heading section-heading--small"><div><span className="eyebrow">DONE</span><h2>完成内容</h2></div><span>{completedPlans.length} 项</span></div>{visible(completedPlans, completedOpen).map((plan) => <article key={plan.id}><span>✓</span><div><b>{plan.title}</b><small>{plan.start} · {plan.category}</small></div></article>)}{completedPlans.length === 0 && <div className="mini-empty">完成第一项行动后，这里会亮起来。</div>}{completedPlans.length > 5 && <button className="load-more" onClick={() => setCompletedOpen((current) => !current)}>{completedOpen ? "收起" : `查看其余 ${completedPlans.length - 5} 项`}</button>}</section>
       <section className="review-list pixel-card"><div className="section-heading section-heading--small"><div><span className="eyebrow">{period === "week" ? "OVERDUE" : "OPEN"}</span><h2>{period === "week" ? "本周逾期内容" : settlement ? "未完成内容" : "接下来可以完成"}</h2></div><span>{missedCount} 项</span></div>{period === "week" || settlement ? <>{visible(missedPlans, missedOpen).map((plan) => <article key={plan.id}><span>○</span><div><b>{plan.title}</b><small>{plan.start} · {plan.category}</small></div></article>)}{missedPlans.length > 5 && <button className="load-more" onClick={() => setMissedOpen((current) => !current)}>{missedOpen ? "收起" : `查看其余 ${missedPlans.length - 5} 项`}</button>}</> : <OpenPlansByCategory plans={missedPlans} />}{missedCount === 0 && <div className="mini-empty">{period === "week" ? "本周当前没有逾期待处理的行动。" : "目前没有待完成的行动。"}</div>}</section>
-      <section className="review-gains pixel-card"><div className="section-heading section-heading--small"><div><span className="eyebrow">GROWTH</span><h2>属性增长</h2></div><span>{attributeGains.length > 10 ? `前 10 项 · 共 ${attributeGains.length} 项` : `${attributeGains.length} 项`}</span></div>{(growthOpen ? attributeGains : attributeGains.slice(0, 10)).map(({ attribute, amount }) => <div key={attribute.id}><span><BadgeSymbol icon={attribute.icon} /></span><b>{attribute.name}</b><strong>+{amount} XP</strong></div>)}{attributeGains.length > 10 && <button className="load-more" type="button" onClick={() => setGrowthOpen((current) => !current)}>{growthOpen ? "收起属性" : `展开其余 ${attributeGains.length - 10} 项`}</button>}{attributeGains.length === 0 && <div className="mini-empty">本期暂无属性增长</div>}</section>
+      <section className="review-gains pixel-card"><div className="section-heading section-heading--small"><div><span className="eyebrow">GROWTH</span><h2>属性增长</h2></div><div className="growth-heading-actions"><span className="growth-total">{period === "week" ? "本周总属性增长" : "本月总属性增长"} <b>+{xp} XP</b></span><span>{attributeGains.length > 10 ? `前 10 项 · 共 ${attributeGains.length} 项` : `${attributeGains.length} 项`}</span></div></div>{(growthOpen ? attributeGains : attributeGains.slice(0, 10)).map(({ attribute, amount }) => <div key={attribute.id}><span><BadgeSymbol icon={attribute.icon} /></span><b>{attribute.name}</b><strong>+{amount} XP</strong></div>)}{attributeGains.length > 10 && <button className="load-more" type="button" onClick={() => setGrowthOpen((current) => !current)}>{growthOpen ? "收起属性" : `展开其余 ${attributeGains.length - 10} 项`}</button>}{attributeGains.length === 0 && <div className="mini-empty">本期暂无属性增长</div>}</section>
       {afterGrowth}
       {settlement ? <section className={`review-harvest pixel-card review-harvest--${settlement.harvest.status}`}><div className="section-heading section-heading--small"><div><span className="eyebrow">AI HARVEST</span><h2>{period === "week" ? "本周收获" : "本月收获"}</h2></div><HarvestProviderTag settlement={settlement} /></div>{settlement.harvest.status === "ready" || settlement.harvest.status === "stale" ? <HarvestJournal text={settlement.harvest.text ?? ""} onRefresh={settlement.harvest.status === "stale" ? () => onRetryHarvest(settlement.id) : undefined} /> : generatingHarvestIds.includes(settlement.id) || settlement.harvest.status === "pending" ? <div className="harvest-loading" role="status"><span className="harvest-spark">✦</span><div><b>正在整理这段时间的闪光点…</b><small>只会使用目标、行动、属性成长和收藏事实。</small></div></div> : <div className="harvest-failed" role="status"><div><b>收获总结暂时没有生成</b><small>事实记录已经保存，服务恢复后可以重新生成。</small></div><button className="pixel-button pixel-button--cyan" onClick={() => onRetryHarvest(settlement.id)}>重新生成</button></div>}</section> : <section className="review-harvest review-harvest--preview pixel-card"><div><span className="eyebrow">NEXT HARVEST</span><h2>{period === "week" ? "周一结算后生成本周收获" : "月末结算后生成本月收获"}</h2><p>{period === "week" ? "先安心行动，完成项数和属性成长会在周结算后自动整理。" : "先安心行动，目标、完成内容、未完成内容和属性成长会自动整理。"}</p></div><span className="harvest-spark">✦</span></section>}
     </div>
@@ -929,10 +948,95 @@ function ActionConfigView({ attributes, attributeCategories, projectCategories, 
   </div>;
 }
 
-function GrowthView({ attributes, skillbooks, goals }: { attributes: Attribute[]; skillbooks: readonly SkillbookRecord[]; goals: readonly GoalRecord[] }) {
+function AttributeAnalyticsView({ attribute, state, onBack }: { attribute: Attribute; state: WeekUpState; onBack: () => void }) {
+  const analytics = useMemo(() => projectAttributeAnalytics(state, attribute.id), [state, attribute.id]);
+  const progress = levelFromTotalXp(analytics.totalXp);
+  const [sourceFilter, setSourceFilter] = useState<"all" | "month" | "week">("all");
+  const [sourceMonth, setSourceMonth] = useState("all");
+  const [visibleSourceCount, setVisibleSourceCount] = useState(20);
+  const today = currentLocalDate();
+  const weekRange = currentWeekRange();
+  const monthKey = today.slice(0, 7);
+  const monthOptions = [...new Set(analytics.sources.map((source) => localDateInShanghai(source.completedAt).slice(0, 7)))].sort().reverse();
+  const filteredSources = analytics.sources.filter((source) => {
+    const date = localDateInShanghai(source.completedAt);
+    if (sourceMonth !== "all" && date.slice(0, 7) !== sourceMonth) return false;
+    if (sourceFilter === "month") return date.slice(0, 7) === monthKey;
+    if (sourceFilter === "week") return date >= weekRange.startDate && date <= weekRange.endDate;
+    return true;
+  });
+  const visibleSources = filteredSources.slice(0, visibleSourceCount);
+  const sourceGroups = [...visibleSources.reduce((groups, source) => {
+    const month = localDateInShanghai(source.completedAt).slice(0, 7);
+    groups.set(month, [...(groups.get(month) ?? []), source]);
+    return groups;
+  }, new Map<string, AttributeXpSource[]>())];
+  const trendMaximum = Math.max(1, ...analytics.thirtyDay.points.map((point) => point.totalXp));
+  const trendPoints = analytics.thirtyDay.points.map((point, index) => {
+    const x = 34 + (index / 29) * 572;
+    const y = 150 - (point.totalXp / trendMaximum) * 124;
+    return `${x.toFixed(1)},${y.toFixed(1)}`;
+  }).join(" ");
+  const weeklyMaximum = Math.max(1, ...analytics.weeklyGains.map((week) => week.amount));
+  const categoryTotal = Math.max(1, analytics.categoryGains.reduce((sum, category) => sum + category.amount, 0));
+  let categoryCursor = 0;
+  const categoryGradient = analytics.categoryGains.length === 0
+    ? "#eee8f0"
+    : `conic-gradient(${analytics.categoryGains.map((category) => {
+      const start = categoryCursor;
+      categoryCursor += (category.amount / categoryTotal) * 100;
+      return `${colorForCategory(category.category)} ${start.toFixed(2)}% ${categoryCursor.toFixed(2)}%`;
+    }).join(", ")})`;
+  const activityMaximum = Math.max(1, ...analytics.thirtyDay.points.map((point) => point.gainedXp));
+  const changeSourceFilter = (next: "all" | "month" | "week") => {
+    setSourceFilter(next);
+    setSourceMonth("all");
+    setVisibleSourceCount(20);
+  };
+
+  return (
+    <div className="view attribute-analytics-view">
+      <div className="attribute-analytics-title">
+        <div><button className="analytics-back" type="button" onClick={onBack}>← 返回成就图鉴</button><span className="eyebrow">ATTRIBUTE ANALYTICS</span><h1>徽章增量分析</h1></div>
+      </div>
+      <section className="attribute-analytics-hero pixel-card" style={{ "--badge-color": badgeColorValue(attribute.color), "--badge-text": readableTextColor(badgeColorValue(attribute.color)) } as CSSProperties}>
+        <div className="badge-sprite"><span><BadgeSymbol icon={attribute.icon} /></span></div>
+        <div className="attribute-analytics-identity"><span className="eyebrow">ATTRIBUTE BADGE · {attribute.category ?? "未分类"}</span><div><h2>{attribute.name}</h2><b>LV.{progress.level}</b></div><p>{attribute.note || "每一次真实完成，都在这里留下增长痕迹。"}</p><div className="analytics-level"><span><i style={{ width: `${progress.percent}%` }} /></span><small>{progress.xpInLevel} / {progress.xpForNext} XP</small></div></div>
+        <div className="attribute-analytics-kpis"><div><span>累计总 XP</span><strong>{analytics.totalXp}</strong></div><div><span>本月增长</span><strong>+{analytics.monthGain}</strong></div></div>
+      </section>
+      <div className="attribute-analytics-grid">
+        <section className="attribute-analytics-panel pixel-card"><div className="analytics-panel-heading"><div><span className="eyebrow">30 DAY TREND</span><h2>30 日累计趋势</h2></div><strong>{analytics.thirtyDay.comparisonLabel}</strong></div><svg className="attribute-trend-chart" viewBox="0 0 640 180" role="img" aria-label={`${attribute.name}最近30日累计XP趋势`}><line x1="34" y1="26" x2="606" y2="26" /><line x1="34" y1="67" x2="606" y2="67" /><line x1="34" y1="108" x2="606" y2="108" /><line x1="34" y1="150" x2="606" y2="150" /><polyline points={trendPoints} /><text x="34" y="173">{analytics.thirtyDay.points[0]?.localDate.slice(5)}</text><text x="570" y="173">{analytics.thirtyDay.points.at(-1)?.localDate.slice(5)}</text></svg></section>
+        <section className="attribute-analytics-panel pixel-card"><div className="analytics-panel-heading"><div><span className="eyebrow">WEEKLY DELTA</span><h2>每周增量</h2></div><strong>4 周</strong></div><div className="attribute-week-bars">{analytics.weeklyGains.map((week, index) => <div className={index === analytics.weeklyGains.length - 1 ? "is-current" : ""} key={week.startDate}><b>+{week.amount} XP</b><i style={{ height: `${Math.max(6, (week.amount / weeklyMaximum) * 100)}%` }} /><small>{index === analytics.weeklyGains.length - 1 ? "本周" : week.startDate.slice(5)}</small></div>)}</div></section>
+        <section className="attribute-analytics-panel pixel-card"><div className="analytics-panel-heading"><div><span className="eyebrow">CATEGORY SOURCES</span><h2>来源构成</h2></div><strong>{analytics.totalXp} XP</strong></div>{analytics.categoryGains.length === 0 ? <div className="mini-empty">还没有可分析的 XP 来源。</div> : <div className="attribute-source-composition"><div className="attribute-source-donut" style={{ background: categoryGradient }}><span>{analytics.totalXp}<small>XP</small></span></div><div>{analytics.categoryGains.map((category) => <p key={category.category}><i style={{ background: colorForCategory(category.category) }} /><b>{category.category}</b><span>{category.amount} XP · {Math.round((category.amount / categoryTotal) * 100)}%</span></p>)}</div></div>}</section>
+        <section className="attribute-analytics-panel pixel-card"><div className="analytics-panel-heading"><div><span className="eyebrow">ACTIVITY RHYTHM</span><h2>增长节奏</h2></div><strong>{analytics.activeDates.length} 个活跃日</strong></div><div className="attribute-activity-labels"><span>30 天前</span><span>今天</span></div><div className="attribute-activity-grid">{analytics.thirtyDay.points.map((point) => <i key={point.localDate} title={`${point.localDate} +${point.gainedXp} XP`} style={{ "--activity-level": point.gainedXp === 0 ? 0 : Math.max(0.2, point.gainedXp / activityMaximum) } as CSSProperties} className={point.gainedXp > 0 ? "is-active" : ""} />)}</div><div className="attribute-activity-foot"><span>颜色越深，单日获得 XP 越多</span><span>最长连续增长 <b>{analytics.longestStreak} 天</b></span></div></section>
+      </div>
+      <section className="attribute-source-ledger pixel-card">
+        <div className="attribute-source-heading"><div><span className="eyebrow">EFFECTIVE XP SOURCES</span><h2>XP 来源记录</h2></div><div className="attribute-source-controls"><select aria-label="定位来源年月" value={sourceMonth} onChange={(event) => { setSourceMonth(event.target.value); setSourceFilter("all"); setVisibleSourceCount(20); }}><option value="all">定位到年月</option>{monthOptions.map((month) => <option value={month} key={month}>{month.replace("-", " 年 ")} 月</option>)}</select><div>{(["all", "month", "week"] as const).map((filter) => <button className={sourceFilter === filter ? "active" : ""} type="button" key={filter} onClick={() => changeSourceFilter(filter)}>{filter === "all" ? "全部" : filter === "month" ? "本月" : "本周"}</button>)}</div></div></div>
+        <div className="attribute-source-table"><div className="attribute-source-row attribute-source-row--head"><span>完成日期</span><span>行动</span><span>项目 / 课程</span><span>项目分类</span><span>有效 XP</span></div>{sourceGroups.map(([month, sources]) => <div className="attribute-source-month" key={month}><header><b>{month.replace("-", " 年 ")} 月</b><span>{sources.length} 条来源 · +{sources.reduce((sum, source) => sum + source.amount, 0)} XP</span></header>{sources.map((source) => <div className="attribute-source-row" key={source.completionFactId}><time>{localDateInShanghai(source.completedAt).slice(5)} {new Intl.DateTimeFormat("zh-CN", { timeZone: "Asia/Shanghai", hour: "2-digit", minute: "2-digit", hour12: false }).format(new Date(source.completedAt))}</time><b>{source.planTitle}</b><span>{source.projectOrCourse}</span><em style={{ "--source-category": colorForCategory(source.projectCategory) } as CSSProperties}>{source.projectCategory}</em><strong>+{source.amount}</strong></div>)}</div>)}</div>
+        {visibleSources.length === 0 && <div className="mini-empty">当前筛选范围内没有有效 XP 来源。</div>}
+        {visibleSourceCount < filteredSources.length && <button className="attribute-source-more" type="button" onClick={() => setVisibleSourceCount((current) => current + 20)}>继续加载更早记录 ↓</button>}
+        <p className="attribute-source-meta">已显示 {visibleSources.length} 条，共 {filteredSources.length} 条当前有效来源</p>
+      </section>
+    </div>
+  );
+}
+
+function GrowthView({ attributes, skillbooks, goals, state }: { attributes: Attribute[]; skillbooks: readonly SkillbookRecord[]; goals: readonly GoalRecord[]; state: WeekUpState }) {
   const [section, setSection] = useState<"badges" | "skillbooks" | "milestones">("badges");
   const [selectedCategory, setSelectedCategory] = useState("all");
   const [expandedCategories, setExpandedCategories] = useState<string[]>([]);
+  const [selectedAttributeId, setSelectedAttributeId] = useState<string | null>(null);
+  const [analyticsEnabled, setAnalyticsEnabled] = useState(false);
+  useEffect(() => {
+    const query = window.matchMedia("(min-width: 821px)");
+    const sync = () => {
+      setAnalyticsEnabled(query.matches);
+      if (!query.matches) setSelectedAttributeId(null);
+    };
+    sync();
+    query.addEventListener("change", sync);
+    return () => query.removeEventListener("change", sync);
+  }, []);
   const preferredCategories = ["学习", "研究", "身体", "表达", "生活", "未分类"];
   const categories = Array.from(new Set(attributes.map((attribute) => attribute.category ?? "未分类"))).sort((left, right) => {
     const leftIndex = preferredCategories.indexOf(left);
@@ -951,6 +1055,8 @@ function GrowthView({ attributes, skillbooks, goals }: { attributes: Attribute[]
     items: catalogAttributes.filter((attribute) => (attribute.category ?? "未分类") === category),
     total: attributes.filter((attribute) => (attribute.category ?? "未分类") === category).length,
   }));
+  const selectedAttribute = attributes.find((attribute) => attribute.id === selectedAttributeId);
+  if (selectedAttribute) return <AttributeAnalyticsView attribute={selectedAttribute} state={state} onBack={() => setSelectedAttributeId(null)} />;
   return (
     <div className="view">
       <div className="page-title"><div><span className="eyebrow">PIXEL ATLAS</span><h1>成就图鉴</h1></div><div className="page-title__actions"><span className="collection-count">{section === "badges" ? `${attributes.length} 枚徽章` : section === "skillbooks" ? `${skillbooks.length} 本技能书` : `${goals.filter((goal) => goal.archivedAt).length} 个里程碑`}</span></div></div>
@@ -960,7 +1066,7 @@ function GrowthView({ attributes, skillbooks, goals }: { attributes: Attribute[]
         const expanded = expandedCategories.includes(group.category);
         const visibleItems = expanded ? group.items : group.items.slice(0, 3);
         const headingId = `attribute-category-${index}`;
-        return <section className="attribute-category-section pixel-card" style={{ "--category-accent": colorForCategory(group.category) } as CSSProperties} key={group.category} aria-labelledby={headingId}><header className="attribute-category-heading"><div><span className="category-pixel" aria-hidden="true" /><div><span className="eyebrow">ATTRIBUTE CLASS</span><h2 id={headingId}>{group.category}</h2></div></div><span>{group.total} 枚徽章</span></header><div className="badge-grid">{visibleItems.map((attribute) => <PixelBadge key={attribute.id} attribute={attribute} />)}</div>{group.items.length > 3 && <button className="category-expand" onClick={() => setExpandedCategories((current) => expanded ? current.filter((item) => item !== group.category) : [...current, group.category])}>{expanded ? `收起${group.category}分类` : `展开本类其余 ${group.items.length - 3} 枚`}</button>}</section>;
+        return <section className="attribute-category-section pixel-card" style={{ "--category-accent": colorForCategory(group.category) } as CSSProperties} key={group.category} aria-labelledby={headingId}><header className="attribute-category-heading"><div><span className="category-pixel" aria-hidden="true" /><div><span className="eyebrow">ATTRIBUTE CLASS</span><h2 id={headingId}>{group.category}</h2></div></div><span>{group.total} 枚徽章</span></header><div className="badge-grid">{visibleItems.map((attribute) => <PixelBadge key={attribute.id} attribute={attribute} onOpen={analyticsEnabled ? () => setSelectedAttributeId(attribute.id) : undefined} />)}</div>{group.items.length > 3 && <button className="category-expand" onClick={() => setExpandedCategories((current) => expanded ? current.filter((item) => item !== group.category) : [...current, group.category])}>{expanded ? `收起${group.category}分类` : `展开本类其余 ${group.items.length - 3} 枚`}</button>}</section>;
       })}</div> : <section className="empty-page pixel-card"><span className="empty-pixel">✦</span><h2>还没有属性徽章</h2><p>在“行动配置”中创建属性后，完成计划获得的经验会陈列在这里。</p></section>}</> : section === "skillbooks" ? <section className="skillbook-section skillbook-section--standalone pixel-card" role="tabpanel"><div className="section-heading"><div><span className="eyebrow">LEARNING MORE</span><h2>技能书收藏架</h2><p>课程正式结课后自动收录，只作永久收藏展示。</p></div><span className="readonly-tag">永久收藏 · 无数值效果</span></div><div className="bookshelf">{skillbooks.length === 0 ? <article className="empty-book"><span>＋</span><p>完成 Learning MORE 正式课程后<br />技能书会出现在这里</p></article> : skillbooks.map((book) => <article className="skillbook-card" key={book.id}><span>▥</span><b>{book.title}</b><small>{book.acquiredAt.slice(0, 10)} 收集</small></article>)}</div></section> : <MilestoneRunner goals={goals} />}
     </div>
   );
@@ -1469,7 +1575,7 @@ export default function Home() {
           {tab === "month" && <MonthDashboard attributes={attributes} plans={plans} planRecords={weekUp.state.plans.filter((plan) => plan.removedAt === undefined)} goals={weekUp.state.goals} projects={weekUp.state.projects} projectCategories={weekUp.state.projectCategories} dailySettlements={weekUp.state.dailySettlements} settlements={weekUp.state.settlements} weights={weights} generatingHarvestIds={weekUp.generatingHarvestIds} onRetryHarvest={(id) => void weekUp.dispatch({ type: "settlement.harvest.retry", id })} onNewGoal={() => setGoalEditor({ period: "month" })} onEditGoal={(goal) => setGoalEditor({ period: "month", initial: goal })} onOpenWeek={(weekRange) => { setSelectedWeekRange(weekRange); setTab("week"); }} onOpenCalendar={() => openCalendar("month")} onOpenWeight={() => setTab("weight")} />}
           {tab === "calendar" && <CalendarView plans={calendarContent === "timeline" ? weekUp.view.timelinePlans : plans} unconfiguredPlans={plans} untimedCompletionPlans={weekUp.view.timelinePlans} settledDates={weekUp.state.dailySettlements.map((settlement) => settlement.localDate)} initialMode={calendarInitialMode} content={calendarContent} onEditPlan={(id) => setPlanEditor(weekUp.state.plans.find((plan) => plan.id === id) ?? null)} />}
           {tab === "action-config" && <ActionConfigView attributes={attributes} attributeCategories={weekUp.state.attributeCategories} projectCategories={weekUp.state.projectCategories} projects={weekUp.state.projects.filter((project) => project.source === "week-up" && project.archivedAt === undefined)} courses={weekUp.state.learningMoreCourses} courseProjects={weekUp.state.projects.filter((project) => project.source === "learning-more" && project.archivedAt === undefined)} onNewAttribute={() => setAttributeEditor("new")} onEditAttribute={(attribute) => setAttributeEditor(weekUp.state.attributes.find((item) => item.id === attribute.id) ?? null)} onNewProject={() => setProjectEditor("new")} onEditProject={setProjectEditor} onConfigureCourse={setProjectEditor} onCreateCategory={(name) => { void weekUp.dispatch({ type: "attribute-category.create", name }); }} onRenameCategory={(id, name) => { void weekUp.dispatch({ type: "attribute-category.rename", id, name }); }} onDeleteCategory={(id) => { void weekUp.dispatch({ type: "attribute-category.delete", id }); }} onCreateProjectCategory={(name, color) => { void weekUp.dispatch({ type: "project-category.create", name, color }); }} onRenameProjectCategory={(id, name, color) => { void weekUp.dispatch({ type: "project-category.rename", id, name, color }); }} onDeleteProjectCategory={(id) => { void weekUp.dispatch({ type: "project-category.delete", id }); }} />}
-          {tab === "growth" && <GrowthView attributes={weekUp.view.catalogAttributes} skillbooks={weekUp.state.skillbooks} goals={weekUp.state.goals} />}
+          {tab === "growth" && <GrowthView attributes={weekUp.view.catalogAttributes} skillbooks={weekUp.state.skillbooks} goals={weekUp.state.goals} state={weekUp.state} />}
           {tab === "weight" && <WeightView entries={weights} target={weekUp.state.preferences.targetWeightKg} onTarget={(valueKg) => void weekUp.dispatch({ type: "weight.target", valueKg })} onCorrectToday={addWeight} />}
         </div>
       </main>

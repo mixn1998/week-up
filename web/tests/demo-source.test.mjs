@@ -316,6 +316,42 @@ test("keeps one monthly growth section followed by contribution and weight", asy
   assert.ok(monthDashboard.indexOf("contribution-panel") < monthDashboard.indexOf("month-weight-panel"), "project contribution should precede weight trend");
 });
 
+test("opens full atlas badges into one desktop attribute analytics page", async () => {
+  const page = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
+  const analyticsStart = page.indexOf("function AttributeAnalyticsView");
+  const analyticsEnd = page.indexOf("function GrowthView", analyticsStart);
+  const analytics = page.slice(analyticsStart, analyticsEnd);
+  assert.match(analytics, /function AttributeAnalyticsView/);
+  assert.match(analytics, /projectAttributeAnalytics/);
+  assert.match(analytics, /返回成就图鉴/);
+  assert.match(analytics, /30 日累计趋势/);
+  assert.match(analytics, /每周增量/);
+  assert.match(analytics, /来源构成/);
+  assert.match(analytics, /增长节奏/);
+  assert.match(analytics, /继续加载更早记录/);
+  assert.doesNotMatch(analytics, /下一页 →/);
+});
+
+test("only full atlas badges receive the analytics open action", async () => {
+  const page = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
+  const growthStart = page.indexOf("function GrowthView");
+  const growthEnd = page.indexOf("function WeightView", growthStart);
+  const growth = page.slice(growthStart, growthEnd);
+  const todayStart = page.indexOf("function TodayView");
+  const todayEnd = page.indexOf("function GoalsView", todayStart);
+  const today = page.slice(todayStart, todayEnd);
+  assert.match(growth, /onOpen=/);
+  assert.doesNotMatch(today, /onOpen=/);
+});
+
+test("shows one total attribute gain beside daily, weekly, and monthly breakdowns", async () => {
+  const page = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
+  assert.match(page, /今日总属性增长/);
+  assert.match(page, /本周总属性增长/);
+  assert.match(page, /本月总属性增长/);
+  assert.match(page, /totalAttributeGain/);
+});
+
 test("keeps destructive modal actions consistent and on one line", async () => {
   const [page, css] = await Promise.all([
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),

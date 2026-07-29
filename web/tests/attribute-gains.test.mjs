@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { attributeGainsForCompletedDate, netAttributeGainsForDate, sortAttributeRewardsByAmount } from "../lib/attribute-gains.ts";
+import { attributeGainsForCompletedDate, netAttributeGainsForDate, sortAttributeRewardsByAmount, totalAttributeGain } from "../lib/attribute-gains.ts";
 
 test("sorts displayed attribute rewards from highest gain to lowest", () => {
   assert.deepEqual(sortAttributeRewardsByAmount([
@@ -9,6 +9,14 @@ test("sorts displayed attribute rewards from highest gain to lowest", () => {
     { attributeId: "design", amount: 3 },
     { attributeId: "analysis", amount: 2 },
   ]).map((reward) => reward.attributeId), ["design", "analysis", "logic"]);
+});
+
+test("sums all attribute gains in the selected period", () => {
+  assert.equal(totalAttributeGain([
+    { attributeId: "logic", amount: 3 },
+    { attributeId: "design", amount: 2 },
+    { attributeId: "coding", amount: 4 },
+  ]), 9);
 });
 
 test("calculates today's net positive gains in Shanghai and removes undone gains", () => {

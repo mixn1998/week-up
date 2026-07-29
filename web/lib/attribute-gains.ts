@@ -5,6 +5,10 @@ export function sortAttributeRewardsByAmount(rewards: readonly AttributeReward[]
   return [...rewards].sort((left, right) => right.amount - left.amount || left.attributeId.localeCompare(right.attributeId));
 }
 
+export function totalAttributeGain(rewards: readonly Readonly<{ amount: number }>[]): number {
+  return rewards.reduce((sum, reward) => sum + reward.amount, 0);
+}
+
 function localDateInTimeZone(instant: string, timeZone: string): string {
   const parts = new Intl.DateTimeFormat("en-CA", { timeZone, year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(new Date(instant));
   const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
