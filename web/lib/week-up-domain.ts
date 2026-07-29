@@ -938,6 +938,49 @@ function reconcileLearningMoreHistoryMirrors(state: WeekUpState, context: Domain
       };
     }
   }
+  const historyPlans = next.plans.filter((plan) =>
+    plan.removedAt === undefined &&
+    plan.source === "learning-more" &&
+    plan.sourceLessonId !== undefined &&
+    isLearningMoreHistorySourceRef(plan.sourceRef)
+  );
+  for (const historyPlan of historyPlans) {
+    const historyDate = localDate(historyPlan.startAt);
+    const completedTimetablePlan = next.plans
+      .filter((plan) => {
+        if (
+          plan.id === historyPlan.id ||
+          plan.removedAt !== undefined ||
+          plan.source !== "learning-more" ||
+          plan.sourceLessonId !== historyPlan.sourceLessonId ||
+          plan.sourceRef === undefined ||
+          isLearningMoreHistorySourceRef(plan.sourceRef)
+        ) return false;
+        if (plan.sourceCourseId && historyPlan.sourceCourseId && plan.sourceCourseId !== historyPlan.sourceCourseId) return false;
+        const completion = activeCompletion(next, plan.id);
+        return completion !== undefined && localDate(completion.completedAt) === historyDate;
+      })
+      .sort((left, right) => left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id))[0];
+    if (!completedTimetablePlan) continue;
+    if (activeCompletion(next, historyPlan.id)) {
+      next = revertPlanCompletionInState(next, historyPlan.id, context, now);
+    }
+    next = {
+      ...next,
+      plans: next.plans.map((plan): PlanRecord => {
+        if (plan.id === completedTimetablePlan.id) {
+          return {
+            ...plan,
+            sourceRef: historyPlan.sourceRef,
+            sourceLessonId: historyPlan.sourceLessonId,
+            sourceCourseId: historyPlan.sourceCourseId ?? plan.sourceCourseId,
+            updatedAt: now,
+          };
+        }
+        return plan.id === historyPlan.id ? { ...plan, removedAt: now, updatedAt: now } : plan;
+      }),
+    };
+  }
   return next;
 }
 
@@ -1751,7 +1794,9 @@ export function dispatchWeekUp(state: WeekUpState, command: WeekUpCommand, conte
           const project = next.projects.find((item) => item.source === "learning-more" && item.sourceCourseId === lesson.courseId && item.archivedAt === undefined);
           if (!project) continue;
           const sourceRef = learningMoreSourceRef(lesson.scheduleItemId);
-          const existing = [...plans].reverse().find((plan) => plan.source === "learning-more" && plan.sourceRef === sourceRef)
+          const existing = [...plans].reverse().find((plan) => plan.removedAt === undefined && plan.source === "learning-more" && plan.sourceRef === sourceRef)
+            ?? [...plans].reverse().find((plan) => plan.source === "learning-more" && plan.sourceRef === sourceRef)
+            ?? [...plans].reverse().find((plan) => plan.removedAt === undefined && plan.source === "learning-more" && plan.sourceLessonId === lesson.lessonId && plan.sourceRef === undefined)
             ?? [...plans].reverse().find((plan) => plan.source === "learning-more" && plan.sourceLessonId === lesson.lessonId && plan.sourceRef === undefined);
           const existingCompletion = existing ? activeCompletion(next, existing.id) : undefined;
           const keepsDate = existing !== undefined && localDate(existing.startAt) === lesson.scheduledDate;

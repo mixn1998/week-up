@@ -1264,6 +1264,67 @@ test("moves a Learning MORE completion even after the legacy mirror was compacte
   assert.equal(totalXpForAttribute(state, attributeId), 1);
 });
 
+test("reconciles a completed timetable lesson when its historical mirror appears later", () => {
+  const h = harness("2026-07-24T08:00:00.000Z");
+  let state = addAttribute(h, createEmptyWeekUpState());
+  const attributeId = state.attributes[0].id;
+  const course = { courseId: "course-history", title: "历史课程", status: "active" };
+  const timetableLesson = {
+    courseId: "course-history",
+    lessonId: "lesson-history",
+    scheduleItemId: "schedule-history",
+    scheduledDate: "2026-07-24",
+    title: "已完成课节",
+    order: 0,
+  };
+  state = h.run(state, { type: "learning-more.import", courses: [course], lessons: [timetableLesson], facts: [] });
+  state = h.run(state, { type: "project.update", id: state.projects[0].id, patch: { rewardsPerUnit: [{ attributeId, amount: 1 }] } });
+  const completedPlan = state.plans.find((plan) => plan.sourceRef === "learning-more:schedule-history");
+  assert.ok(completedPlan);
+
+  state = h.run(state, {
+    type: "learning-more.import",
+    facts: [{
+      factId: "calendar-completed:2026-07-24:lesson-history",
+      type: "lesson-completed",
+      occurredAt: "2026-07-24T10:00:00+08:00",
+      actualStartedAt: "2026-07-24T09:00:00+08:00",
+      actualEndedAt: "2026-07-24T10:00:00+08:00",
+      courseId: "course-history",
+      lessonId: "lesson-history",
+      scheduleItemId: "schedule-history",
+    }],
+  });
+  assert.equal(totalXpForAttribute(state, attributeId), 1);
+
+  const historicalLesson = {
+    ...timetableLesson,
+    scheduleItemId: "history:2026-07-24:lesson-history",
+  };
+  state = h.run(state, { type: "learning-more.import", lessons: [historicalLesson], facts: [] });
+
+  const activeLessonPlans = state.plans.filter((plan) =>
+    plan.removedAt === undefined &&
+    plan.source === "learning-more" &&
+    plan.sourceLessonId === "lesson-history"
+  );
+  assert.equal(activeLessonPlans.length, 1);
+  assert.equal(activeLessonPlans[0].id, completedPlan.id);
+  assert.equal(activeLessonPlans[0].sourceRef, "learning-more:history:2026-07-24:lesson-history");
+  assert.equal(activeLessonPlans[0].startAt, "2026-07-24T09:00:00+08:00");
+  assert.equal(activeLessonPlans[0].endAt, "2026-07-24T10:00:00+08:00");
+  assert.equal(state.completionFacts.filter((fact) => fact.planId === completedPlan.id && fact.revertedAt === undefined).length, 1);
+  assert.equal(totalXpForAttribute(state, attributeId), 1);
+
+  state = h.run(state, { type: "learning-more.import", lessons: [historicalLesson], facts: [] });
+  assert.equal(state.plans.filter((plan) =>
+    plan.removedAt === undefined &&
+    plan.source === "learning-more" &&
+    plan.sourceLessonId === "lesson-history"
+  ).length, 1);
+  assert.equal(totalXpForAttribute(state, attributeId), 1);
+});
+
 test("deduplicates repeated Learning MORE mirror plans and compensates duplicated XP", () => {
   const h = harness();
   let state = addAttribute(h, createEmptyWeekUpState());
