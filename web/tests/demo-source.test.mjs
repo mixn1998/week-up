@@ -397,11 +397,16 @@ test("only full atlas badges receive the analytics open action", async () => {
 });
 
 test("shows one total attribute gain beside daily, weekly, and monthly breakdowns", async () => {
-  const page = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
+  const [page, css] = await Promise.all([
+    readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
+  ]);
   assert.match(page, /今日总属性增长/);
   assert.match(page, /本周总属性增长/);
   assert.match(page, /本月总属性增长/);
   assert.match(page, /totalAttributeGain/);
+  assert.match(page, /今日属性值<span className="growth-up-accent">UP！<\/span>/);
+  assert.match(css, /\.growth-up-accent\s*\{[^}]*color:\s*var\(--pink\)[^}]*white-space:\s*nowrap/);
 });
 
 test("keeps destructive modal actions consistent and on one line", async () => {

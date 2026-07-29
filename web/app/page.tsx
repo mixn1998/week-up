@@ -463,7 +463,7 @@ function TodayView({
 
         <aside className="today-side">
           <section className="pixel-card growth-snapshot">
-            <div className="section-heading section-heading--small"><div><span className="eyebrow">GROWTH</span><h2>今日属性值UP！</h2></div><div className="growth-heading-actions"><span className="growth-total">今日总属性增长 <b>+{dailyTotalGain} XP</b></span>{dailyGains.length > 5 ? <button className="week-xp week-xp--button" onClick={() => setDailyGrowthOpen((current) => !current)}>{dailyGrowthOpen ? "收起" : `展开全部 ${dailyGains.length} 项`}</button> : <span className="week-xp">今日 {dailyGains.length} 项</span>}</div></div>
+            <div className="section-heading section-heading--small"><div><span className="eyebrow">GROWTH</span><h2>今日属性值<span className="growth-up-accent">UP！</span></h2></div><div className="growth-heading-actions"><span className="growth-total">今日总属性增长 <b>+{dailyTotalGain} XP</b></span>{dailyGains.length > 5 ? <button className="week-xp week-xp--button" onClick={() => setDailyGrowthOpen((current) => !current)}>{dailyGrowthOpen ? "收起" : `展开全部 ${dailyGains.length} 项`}</button> : <span className="week-xp">今日 {dailyGains.length} 项</span>}</div></div>
             <div className="compact-badges">{dailyGains.length === 0 ? <div className="mini-empty">今天还没有属性提升，完成行动后会在这里点亮。</div> : visibleDailyGains.map(({ attribute, amount }) => <PixelBadge key={attribute.id} attribute={attribute} compact gain={amount} />)}</div>
           </section>
           <section className="pixel-card weight-widget">

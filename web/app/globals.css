@@ -770,6 +770,8 @@ button:focus-visible, input:focus-visible, textarea:focus-visible {
 
 .today-side { display: flex; flex-direction: column; gap: 22px; }
 .growth-snapshot, .weight-widget { padding: 18px; }
+.growth-snapshot .section-heading h2 { display: inline-flex; align-items: baseline; gap: 5px; white-space: nowrap; }
+.growth-up-accent { color: var(--pink); white-space: nowrap; }
 .week-xp { padding: 4px 7px; border: 2px solid var(--ink); background: var(--yellow); font-family: Consolas, monospace; font-size: 10px; font-weight: 900; }
 .growth-heading-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
 .growth-total { padding: 5px 8px; border: 2px solid var(--ink); background: var(--cyan); box-shadow: 2px 2px 0 var(--ink); color: var(--ink); font-size: 9px; font-weight: 900; white-space: nowrap; }
