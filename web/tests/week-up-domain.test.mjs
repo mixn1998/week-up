@@ -713,6 +713,35 @@ test("can carry an overdue plan into a new date without assigning a time", () =>
   assert.equal(carried.startAt.slice(0, 10), "2026-07-21");
 });
 
+test("reschedules a past time-unconfigured plan from the overdue queue", () => {
+  const h = harness("2026-07-20T08:00:00+08:00");
+  let state = addAttribute(h, createEmptyWeekUpState());
+  state = addPlan(h, state, state.attributes[0].id, {
+    title: "论文写作 02",
+    startAt: "2026-07-19T00:00:00+08:00",
+    endAt: "2026-07-19T01:00:00+08:00",
+    timeStatus: "unscheduled",
+    timeSegments: [],
+  });
+  const originalId = state.plans[0].id;
+
+  state = h.run(state, {
+    type: "plan.overdue.reschedule",
+    id: originalId,
+    startAt: "2026-07-20T00:00:00+08:00",
+    endAt: "2026-07-20T01:00:00+08:00",
+    timeStatus: "unscheduled",
+    timeSegments: [],
+  });
+
+  const original = state.plans.find((plan) => plan.id === originalId);
+  const carried = state.plans.find((plan) => plan.overdueSourcePlanId === originalId);
+  assert.ok(carried);
+  assert.equal(original.overdueRescheduledPlanId, carried.id);
+  assert.equal(carried.timeStatus, "unscheduled");
+  assert.deepEqual(carried.timeSegments, []);
+});
+
 test("does not rewrite a frozen weekly settlement after a historical completion correction", () => {
   const h = harness("2026-07-20T08:00:00+08:00");
   let state = addAttribute(h, createEmptyWeekUpState());

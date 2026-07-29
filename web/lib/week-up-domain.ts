@@ -623,7 +623,6 @@ function shiftSegments(segments: readonly PlanTimeSegment[], deltaMs: number, pl
 
 function planIsOverdue(plan: PlanRecord, at: string): boolean {
   return participatesInOverdueQueue(plan)
-    && plan.timeStatus !== "unscheduled"
     && localDate(plan.startAt) < localDate(at);
 }
 
