@@ -336,14 +336,28 @@ test("opens full atlas badges into one desktop attribute analytics page", async 
 
 test("adds one desktop all-attribute overview beside individual badge analytics", async () => {
   const page = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
+  const overviewStart = page.indexOf("function AttributeOverviewView");
+  const overviewEnd = page.indexOf("function AttributeAnalyticsView", overviewStart);
+  const overview = page.slice(overviewStart, overviewEnd);
+  const growthStart = page.indexOf("function GrowthView");
+  const growthEnd = page.indexOf("function WeightView", growthStart);
+  const growth = page.slice(growthStart, growthEnd);
   assert.match(page, /function AttributeOverviewView/);
   assert.match(page, /projectAttributeOverview/);
-  assert.match(page, /属性总览/);
-  assert.match(page, /属性分类构成/);
-  assert.match(page, /徽章等级分布/);
-  assert.match(page, /全属性累计趋势/);
-  assert.match(page, /近 30 日增长排行/);
-  assert.match(page, /analyticsEnabled && section === "badges"/);
+  assert.equal(overview.match(/全属性数据总览/g)?.length, 1);
+  assert.doesNotMatch(overview, /FULL ATTRIBUTE MAP|看见属性存量|总览使用与单枚徽章/);
+  assert.match(overview, /overview-category-donut/);
+  assert.match(overview, /overview-level-distribution/);
+  assert.match(overview, /各项属性总 XP/);
+  assert.doesNotMatch(overview, /全属性累计趋势|近 30 日增长排行/);
+  assert.match(overview, /slice\(0, 8\)/);
+  assert.match(overview, /展开其余/);
+  assert.match(overview, /收起属性明细/);
+  assert.match(growth, /category-summary-row/);
+  assert.match(growth, /analyticsEnabled && section === "badges"/);
+  const pageTitle = growth.slice(growth.indexOf('<div className="page-title">'), growth.indexOf('<div className="growth-subtabs"'));
+  assert.doesNotMatch(pageTitle, /属性总览/);
+  assert.doesNotMatch(pageTitle, /collection-count/);
 });
 
 test("renders weekly gains inside a fixed chart slot and does not draw a purple badge frame", async () => {
