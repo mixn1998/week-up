@@ -379,6 +379,7 @@ test("adds one desktop all-attribute overview beside individual badge analytics"
   assert.match(overview, /展开其余/);
   assert.match(overview, /收起属性明细/);
   assert.match(css, /\.attribute-overview-hero h1 \{[^}]*font-size: clamp\(24px,2\.6vw,36px\)/);
+  assert.match(css, /\.overview-total-bars \{[^}]*min-width: max\(100%,calc\(var\(--attribute-count\) \* 66px\)\)[^}]*grid-template-columns: repeat\(var\(--attribute-count\),58px\)[^}]*justify-content: center[^}]*gap: 8px/);
   assert.match(css, /\.overview-total-bars button > i \{[^}]*width: 58%/);
   assert.match(growth, /category-summary-row/);
   assert.match(growth, /analyticsEnabled && section === "badges"/);
