@@ -1066,8 +1066,8 @@ button.drawer-plan__time:hover, button.drawer-plan__time:focus-visible { backgro
 .attribute-analytics-panel { min-height: 270px; padding: 19px 21px; }
 .analytics-panel-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
 .analytics-panel-heading h2 { margin: 4px 0 0; font-size: 19px; }
-.analytics-panel-heading > strong { display: inline-flex; align-items: baseline; gap: 5px; font-family: "Microsoft YaHei UI","PingFang SC",sans-serif; font-size: 17px; font-variant-numeric: tabular-nums; font-weight: 900; letter-spacing: -.2px; line-height: 1; }
-.analytics-panel-heading > strong small { color: var(--muted); font-size: 10px; font-weight: 900; }
+.analytics-panel-heading > strong { display: inline-flex; align-items: baseline; gap: 4px; font-family: "Microsoft YaHei UI","PingFang SC",sans-serif; font-size: 16px; font-variant-numeric: tabular-nums; font-weight: 900; letter-spacing: 0; line-height: 1; white-space: nowrap; }
+.analytics-panel-heading > strong small { color: var(--muted); font-size: 9px; font-weight: 900; letter-spacing: 0; }
 .analytics-panel-heading > strong b { color: var(--pink); font-family: inherit; }
 .attribute-trend-chart { width: 100%; height: 178px; margin-top: 8px; overflow: visible; }
 .attribute-trend-chart line { stroke: rgba(48,36,71,.12); stroke-width: 1; }
@@ -1082,7 +1082,7 @@ button.drawer-plan__time:hover, button.drawer-plan__time:focus-visible { backgro
 .attribute-week-bars small { color: var(--muted); font-family: Consolas,monospace; font-size: 8px; }
 .attribute-overview-hero { display: grid; grid-template-columns: minmax(280px,1fr) auto; align-items: center; gap: 24px; margin-bottom: 22px; padding: 24px 26px; border-top: 8px solid var(--yellow); }
 .attribute-overview-hero__title { display: flex; min-width: 0; flex-direction: column; align-items: flex-start; gap: 7px; }
-.attribute-overview-hero h1 { margin: 0; font-size: clamp(26px,3.2vw,44px); letter-spacing: -1px; }
+.attribute-overview-hero h1 { margin: 0; font-size: clamp(24px,2.6vw,36px); letter-spacing: -.8px; }
 .attribute-overview-kpis { display: grid; grid-template-columns: repeat(4,minmax(105px,1fr)); gap: 9px; }
 .attribute-overview-kpis > div { min-width: 105px; padding: 11px 12px; border: 3px solid var(--ink); background: white; box-shadow: 3px 3px 0 var(--ink); }
 .attribute-overview-kpis span, .attribute-overview-kpis strong { display: block; }
@@ -1111,7 +1111,7 @@ button.drawer-plan__time:hover, button.drawer-plan__time:focus-visible { backgro
 .overview-total-bars { display: grid; min-width: max(100%,calc(var(--attribute-count) * 58px)); height: 285px; grid-template-columns: repeat(var(--attribute-count),minmax(48px,1fr)); align-items: stretch; gap: 9px; }
 .overview-total-bars button { display: grid; min-width: 0; grid-template-rows: 24px minmax(0,1fr) 34px; justify-items: center; gap: 6px; padding: 0; border: 0; background: transparent; color: var(--ink); cursor: pointer; }
 .overview-total-bars button > b { align-self: end; font-family: "Microsoft YaHei UI","PingFang SC",sans-serif; font-size: 9px; font-variant-numeric: tabular-nums; }
-.overview-total-bars button > i { display: flex; width: 76%; height: 100%; align-items: flex-end; border-bottom: 3px solid rgba(48,36,71,.45); }
+.overview-total-bars button > i { display: flex; width: 58%; height: 100%; align-items: flex-end; border-bottom: 3px solid rgba(48,36,71,.45); }
 .overview-total-bars button > i > em { display: block; width: 100%; border: 3px solid var(--ink); box-shadow: 3px 3px 0 rgba(48,36,71,.18); }
 .overview-total-bars button > small { max-width: 52px; overflow: hidden; font-size: 8px; font-weight: 900; line-height: 1.25; text-align: center; text-overflow: ellipsis; }
 .attribute-overview-table { padding: 20px 22px; }

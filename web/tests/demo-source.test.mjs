@@ -317,7 +317,10 @@ test("keeps one monthly growth section followed by contribution and weight", asy
 });
 
 test("opens full atlas badges into one desktop attribute analytics page", async () => {
-  const page = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
+  const [page, css] = await Promise.all([
+    readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
+  ]);
   const analyticsStart = page.indexOf("function AttributeAnalyticsView");
   const analyticsEnd = page.indexOf("function GrowthView", analyticsStart);
   const analytics = page.slice(analyticsStart, analyticsEnd);
@@ -331,6 +334,12 @@ test("opens full atlas badges into one desktop attribute analytics page", async 
   assert.match(analytics, /每周增量/);
   assert.match(analytics, /来源构成/);
   assert.match(analytics, /增长节奏/);
+  assert.match(analytics, /<strong>4<small>周<\/small><\/strong>/);
+  assert.match(analytics, /<strong>\{analytics\.totalXp\}<small>XP<\/small><\/strong>/);
+  assert.match(analytics, /<strong>\{analytics\.activeDates\.length\}<small>个活跃日<\/small><\/strong>/);
+  assert.match(analytics, /comparisonMetric\.unit/);
+  assert.match(css, /\.analytics-panel-heading > strong \{[^}]*font-family: "Microsoft YaHei UI","PingFang SC",sans-serif;[^}]*font-size: 16px/);
+  assert.match(css, /\.analytics-panel-heading > strong small \{[^}]*font-size: 9px/);
   assert.match(analytics, /const \[visibleSourceCount, setVisibleSourceCount\] = useState\(5\)/);
   assert.match(analytics, /展开其余/);
   assert.match(analytics, /收起来源记录/);
@@ -338,7 +347,10 @@ test("opens full atlas badges into one desktop attribute analytics page", async 
 });
 
 test("adds one desktop all-attribute overview beside individual badge analytics", async () => {
-  const page = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
+  const [page, css] = await Promise.all([
+    readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
+  ]);
   const overviewStart = page.indexOf("function AttributeOverviewView");
   const overviewEnd = page.indexOf("function AttributeAnalyticsView", overviewStart);
   const overview = page.slice(overviewStart, overviewEnd);
@@ -366,6 +378,8 @@ test("adds one desktop all-attribute overview beside individual badge analytics"
   assert.match(overview, /slice\(0, 8\)/);
   assert.match(overview, /展开其余/);
   assert.match(overview, /收起属性明细/);
+  assert.match(css, /\.attribute-overview-hero h1 \{[^}]*font-size: clamp\(24px,2\.6vw,36px\)/);
+  assert.match(css, /\.overview-total-bars button > i \{[^}]*width: 58%/);
   assert.match(growth, /category-summary-row/);
   assert.match(growth, /analyticsEnabled && section === "badges"/);
   const pageTitle = growth.slice(growth.indexOf('<div className="page-title">'), growth.indexOf('<div className="growth-subtabs"'));
