@@ -355,8 +355,8 @@ function WeightChart({ entries, target, compact = false, averageValues }: { entr
   );
 }
 
-function QuickWeightEntry({ initialValue, onSave }: { initialValue?: number; onSave: (value: number) => void }) {
-  const [value, setValue] = useState(initialValue?.toFixed(1) ?? "");
+function QuickWeightEntry({ onSave }: { onSave: (value: number) => void }) {
+  const [value, setValue] = useState("");
   const submit = (event: FormEvent) => {
     event.preventDefault();
     const parsed = Number(value);
@@ -468,7 +468,7 @@ function TodayView({
           </section>
           <section className="pixel-card weight-widget">
             <div className="section-heading section-heading--small"><div><span className="eyebrow">BODY TRACK</span><h2>体重趋势</h2></div><button className="text-button" onClick={onOpenWeight}>展开 →</button></div>
-            {!hasTodayWeight && <QuickWeightEntry initialValue={latest?.value} onSave={onRecordWeight} />}
+            {!hasTodayWeight && <QuickWeightEntry onSave={onRecordWeight} />}
             {latest ? <div className="weight-stats"><strong>{latest.value.toFixed(1)}<small> kg</small></strong><div><small>7日均值</small><b>{averages.at(-1)?.toFixed(1) ?? "—"} kg</b></div></div> : <div className="mini-empty">还没有体重记录。进入体重趋势页录入第一条数据。</div>}
             <WeightChart entries={weights.slice(-14)} compact />
           </section>
@@ -1348,11 +1348,8 @@ type OverdueScheduleValue = Pick<PlanRecord, "startAt" | "endAt" | "timeSegments
 
 function OverdueRescheduleModal({ initial, onClose, onSave }: { initial: PlanRecord; onClose: () => void; onSave: (value: OverdueScheduleValue) => void }) {
   const originalStart = instantParts(initial.startAt);
-  const durationMinutes = Math.max(1, Math.round((Date.parse(initial.endAt) - Date.parse(initial.startAt)) / 60_000));
   const [date, setDate] = useState(currentLocalDate());
-  const [segments, setSegments] = useState<TimeSegmentDraft[]>(initial.timeSegments?.length
-    ? initial.timeSegments.map((segment) => ({ id: segment.id, start: instantParts(segment.startAt).time, end: instantParts(segment.endAt).time }))
-    : [newTimeSegment(originalStart.time, instantParts(initial.endAt).time)]);
+  const [segments, setSegments] = useState<TimeSegmentDraft[]>([newTimeSegment("", "")]);
   const submit = (event: FormEvent) => {
     event.preventDefault();
     if (!date || !quickSegmentsAreValid(segments)) return;
@@ -1365,7 +1362,7 @@ function OverdueRescheduleModal({ initial, onClose, onSave }: { initial: PlanRec
       timeStatus: unscheduled ? "unscheduled" : "scheduled",
     });
   };
-  return <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.currentTarget === event.target) onClose(); }}><form className="quick-modal overdue-modal pixel-card" onSubmit={submit} role="dialog" aria-modal="true" aria-labelledby="overdue-modal-title"><button type="button" className="modal-close" onClick={onClose} aria-label="关闭">×</button><span className="eyebrow">OVERDUE ROUTE</span><h2 id="overdue-modal-title">重新安排行动</h2><div className="overdue-modal__source"><span>!</span><div><b>{initial.title}</b><small>原排期 {instantParts(initial.startAt).date} · {originalStart.time}，原记录会继续保留</small></div></div><label>新日期<input type="date" min={currentLocalDate()} value={date} onChange={(event) => setDate(event.target.value)} /></label><TimeSegmentsEditor segments={segments} onChange={setSegments} allowUnscheduled /><div className="modal-note">默认保留原执行时间与时长（共 {durationMinutes} 分钟），也可设为 --:-- 后进入新日期的“待安排”。新计划会显示“逾期”标签；原记录无法再完成，也不会进入原周结算。</div><div className="modal-actions"><button className="pixel-button pixel-button--pink" type="submit">重新安排</button></div></form></div>;
+  return <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.currentTarget === event.target) onClose(); }}><form className="quick-modal overdue-modal pixel-card" onSubmit={submit} role="dialog" aria-modal="true" aria-labelledby="overdue-modal-title"><button type="button" className="modal-close" onClick={onClose} aria-label="关闭">×</button><span className="eyebrow">OVERDUE ROUTE</span><h2 id="overdue-modal-title">重新安排行动</h2><div className="overdue-modal__source"><span>!</span><div><b>{initial.title}</b><small>原排期 {instantParts(initial.startAt).date} · {originalStart.time}，原记录会继续保留</small></div></div><label>新日期<input type="date" min={currentLocalDate()} value={date} onChange={(event) => setDate(event.target.value)} /></label><TimeSegmentsEditor segments={segments} onChange={setSegments} allowUnscheduled /><div className="modal-note">默认安排到今天，具体时间保持 --:--，可直接进入当天“待安排”；也可以填写新的执行时间。新计划会显示“逾期”标签；原记录无法再完成，也不会进入原周结算。</div><div className="modal-actions"><button className="pixel-button pixel-button--pink" type="submit">重新安排</button></div></form></div>;
 }
 
 function AttributeModal({ initial, categories, onClose, onSave, onArchive, onRemove }: { initial?: AttributeRecord; categories: readonly AttributeCategoryRecord[]; onClose: () => void; onSave: (value: Omit<AttributeRecord, "id" | "createdAt" | "archivedAt">) => void; onArchive?: () => void; onRemove?: () => void }) {

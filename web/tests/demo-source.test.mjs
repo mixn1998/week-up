@@ -202,7 +202,9 @@ test("offers one visually integrated quick weight entry until today is recorded"
     readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
   ]);
   assert.match(page, /const hasTodayWeight = weights\.some\(\(entry\) => entry\.date === currentLocalDate\(\)\)/);
-  assert.match(page, /!hasTodayWeight && <QuickWeightEntry initialValue=\{latest\?\.value\} onSave=\{onRecordWeight\} \/>/);
+  assert.match(page, /const latest = weights\.at\(-1\)/);
+  assert.match(page, /!hasTodayWeight && <QuickWeightEntry onSave=\{onRecordWeight\} \/>/);
+  assert.doesNotMatch(page, /QuickWeightEntry initialValue=/);
   assert.match(page, /className="weight-form weight-form--quick"/);
   assert.match(page, /保存记录/);
   assert.match(page, /onRecordWeight=\{addWeight\}/);
@@ -314,6 +316,15 @@ test("keeps one monthly growth section followed by contribution and weight", asy
   assert.ok(periodFacts.indexOf("review-gains") < periodFacts.indexOf("{afterGrowth}"), "monthly follow-up modules should follow attribute growth");
   assert.ok(periodFacts.indexOf("{afterGrowth}") < periodFacts.indexOf("review-harvest"), "monthly follow-up modules should precede the harvest");
   assert.ok(monthDashboard.indexOf("contribution-panel") < monthDashboard.indexOf("month-weight-panel"), "project contribution should precede weight trend");
+});
+
+test("defaults overdue rescheduling to today without a configured time", async () => {
+  const page = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
+  const modal = page.slice(page.indexOf("function OverdueRescheduleModal"), page.indexOf("function AttributeModal"));
+  assert.match(modal, /useState\(currentLocalDate\(\)\)/);
+  assert.match(modal, /useState<TimeSegmentDraft\[\]>\(\[newTimeSegment\("", ""\)\]\)/);
+  assert.match(modal, /默认安排到今天，具体时间保持 --:--/);
+  assert.doesNotMatch(modal, /默认保留原执行时间与时长/);
 });
 
 test("uses one shared pixel logo across browser, desktop, mobile, and milestone surfaces", async () => {
@@ -585,7 +596,8 @@ test("keeps Candy Arcade and accessibility constraints", async () => {
   assert.match(css, /prefers-reduced-motion/);
   assert.match(css, /min-height: 44px/);
   assert.match(html, /lang="zh-CN"/);
-  assert.match(html, /Week UP — 让每一次行动都看得见/);
+  assert.match(html, /<title>Week UP<\/title>/);
+  assert.doesNotMatch(html, /Week UP —/);
   assert.doesNotMatch(packageJson, /react-loading-skeleton/);
 });
 
