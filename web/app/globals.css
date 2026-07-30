@@ -498,20 +498,11 @@ button:focus-visible, input:focus-visible, textarea:focus-visible {
 }
 
 .brand-mark {
-  position: relative;
-  display: grid;
-  grid-template-columns: repeat(2, 12px);
-  gap: 2px;
-  width: 34px;
-  height: 34px;
-  padding: 3px;
-  border: var(--border);
-  background: var(--yellow);
-  box-shadow: 3px 3px 0 var(--pink);
-  transform: rotate(-3deg);
+  display: block;
+  width: 48px;
+  height: 48px;
+  flex: 0 0 auto;
 }
-.brand-mark i:nth-child(1), .brand-mark i:nth-child(4) { background: var(--pink); }
-.brand-mark i:nth-child(2), .brand-mark i:nth-child(3) { background: var(--cyan); }
 .brand > span:last-child { display: grid; grid-template-columns: auto auto; column-gap: 4px; align-items: end; }
 .brand b, .brand strong {
   font-family: Consolas, "Courier New", monospace;
@@ -1791,7 +1782,8 @@ button.drawer-plan__time:hover, button.drawer-plan__time:focus-visible { backgro
   .sidebar { display: none; }
   .main-area { margin-left: 0; }
   .topbar { height: 60px; padding: 0 14px; }
-  .mobile-brand { display: block; font-family: Consolas, monospace; font-weight: 900; }
+  .mobile-brand { display: flex; align-items: center; gap: 4px; font-family: Consolas, monospace; font-weight: 900; }
+  .mobile-brand .brand-mark { width: 30px; height: 30px; }
   .mobile-brand b { color: var(--pink); }
   .breadcrumb, .sync-status, .top-actions .icon-button { display: none; }
   .page-wrap { padding: 16px 14px 22px; }

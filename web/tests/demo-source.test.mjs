@@ -316,6 +316,23 @@ test("keeps one monthly growth section followed by contribution and weight", asy
   assert.ok(monthDashboard.indexOf("contribution-panel") < monthDashboard.indexOf("month-weight-panel"), "project contribution should precede weight trend");
 });
 
+test("uses one shared pixel logo across browser, desktop, mobile, and milestone surfaces", async () => {
+  const [page, milestoneSample, index, logo] = await Promise.all([
+    readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/milestone-ui-sample.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../index.html", import.meta.url), "utf8"),
+    readFile(new URL("../public/week-up-logo.svg", import.meta.url), "utf8"),
+  ]);
+  assert.equal((page.match(/\/week-up-logo\.svg/g) ?? []).length, 2);
+  assert.equal((milestoneSample.match(/\/week-up-logo\.svg/g) ?? []).length, 2);
+  assert.match(index, /rel="icon" href="\/week-up-logo\.svg"/);
+  assert.match(index, /<title>Week UP<\/title>/);
+  assert.doesNotMatch(index, /<title>[^<]*—/);
+  assert.match(logo, /#ff4d9e/i);
+  assert.match(logo, /#85f2ff/i);
+  assert.doesNotMatch(page, /brand-mark"><i/);
+});
+
 test("opens full atlas badges into one desktop attribute analytics page", async () => {
   const [page, css] = await Promise.all([
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),

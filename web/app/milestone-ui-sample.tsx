@@ -146,7 +146,7 @@ function DetailCard({ item }: { item: Milestone }) {
 
 function Sidebar() {
   return <aside className="milestone-sample-sidebar ml-sidebar">
-    <a className="brand milestone-sample-brand" href="/" aria-label="返回 Week UP"><span className="brand-mark"><i/><i/><i/><i/></span><span><b>WEEK</b><strong>UP!</strong></span></a>
+    <a className="brand milestone-sample-brand" href="/" aria-label="返回 Week UP"><img className="brand-mark" src="/week-up-logo.svg" alt="" /><span><b>WEEK</b><strong>UP!</strong></span></a>
     <nav aria-label="成就图鉴栏目"><a href="/"><span>◇</span><b>属性徽章</b><small>BADGES</small></a><a href="/"><span>▥</span><b>技能书架</b><small>SKILLBOOKS</small></a><button className="is-active" type="button"><span>⌁</span><b>里程地图</b><small>JOURNEY MAP</small></button></nav>
     <div className="ml-sidebar__tip"><small>UI COMPARISON</small><b>三版视觉提案</b><p>使用上方切换器比较同一组旅程数据。</p></div>
     <a className="milestone-back-link" href="/">← 返回正式版</a>
@@ -267,7 +267,7 @@ export function MilestoneWebPreviewPage() {
   const selected = useMemo(() => MILESTONES.find((item) => item.id === selectedId) ?? MILESTONES[0]!, [selectedId]);
   return <div className="ml-web-shell">
     <header className="ml-web-topbar">
-      <a className="brand milestone-sample-brand" href="/" aria-label="返回 Week UP"><span className="brand-mark"><i/><i/><i/><i/></span><span><b>WEEK</b><strong>UP!</strong></span></a>
+      <a className="brand milestone-sample-brand" href="/" aria-label="返回 Week UP"><img className="brand-mark" src="/week-up-logo.svg" alt="" /><span><b>WEEK</b><strong>UP!</strong></span></a>
       <nav aria-label="成就图鉴栏目"><a href="/">属性徽章</a><a href="/">技能书架</a><button type="button" className="is-active">里程地图</button></nav>
       <div className="ml-web-profile"><span>UP</span><div><b>生活探险家</b><small>WEB · DESKTOP</small></div></div>
     </header>
