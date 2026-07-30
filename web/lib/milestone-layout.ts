@@ -12,6 +12,7 @@ export const MILESTONE_ROUTE_START_X = 0;
 export const MILESTONE_ROUTE_END_X = 1200;
 export const MILESTONE_START_NODE_X = 7;
 export const MILESTONE_FINISH_NODE_X = 92;
+export const MILESTONE_DIRECTION_LABEL_OFFSET_Y = 42;
 
 export function milestoneNodeX(kind: MilestoneNodeKind, dateX: number): number {
   if (kind === "start") return MILESTONE_START_NODE_X;
@@ -21,6 +22,10 @@ export function milestoneNodeX(kind: MilestoneNodeKind, dateX: number): number {
 
 export function milestoneRouteY(mapHeight: number, lanePercent: number): number {
   return (lanePercent / 100) * mapHeight + 40;
+}
+
+export function milestoneDirectionLabelTop(lanePercent: number): string {
+  return `calc(${lanePercent}% + ${MILESTONE_DIRECTION_LABEL_OFFSET_Y}px)`;
 }
 
 export function getFullWidthMilestoneRoute(lane: number, y: number): Readonly<{

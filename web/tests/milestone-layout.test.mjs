@@ -5,6 +5,7 @@ import {
   MILESTONE_ROUTE_END_X,
   MILESTONE_ROUTE_START_X,
   getFullWidthMilestoneRoute,
+  milestoneDirectionLabelTop,
   milestoneNodeX,
   milestoneRouteY,
   resolveMilestoneNodePositions,
@@ -97,4 +98,10 @@ test("keeps every route baseline at one constant offset from its node lane", () 
   for (const lane of [18, 50, 82]) {
     assert.ok(Math.abs(milestoneRouteY(mapHeight, lane) - (lane / 100) * mapHeight - 40) < 0.000001);
   }
+});
+
+test("keeps every direction label a fixed distance below its own starting flag", () => {
+  assert.equal(milestoneDirectionLabelTop(18), "calc(18% + 42px)");
+  assert.equal(milestoneDirectionLabelTop(30.8), "calc(30.8% + 42px)");
+  assert.equal(milestoneDirectionLabelTop(82), "calc(82% + 42px)");
 });

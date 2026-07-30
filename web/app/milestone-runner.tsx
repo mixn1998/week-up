@@ -1,6 +1,6 @@
 import { useMemo, useState, type CSSProperties } from "react";
 import type { GoalRecord } from "../lib/week-up-domain";
-import { getFullWidthMilestoneRoute, milestoneNodeX, milestoneRouteY, resolveMilestoneNodePositions, selectMilestoneMapGoals } from "../lib/milestone-layout";
+import { getFullWidthMilestoneRoute, milestoneDirectionLabelTop, milestoneNodeX, milestoneRouteY, resolveMilestoneNodePositions, selectMilestoneMapGoals } from "../lib/milestone-layout";
 
 type MonthCell = Readonly<{ key: string; label: string; short: string; year: number; month: number }>;
 type MapItem = Readonly<{
@@ -151,7 +151,7 @@ export function MilestoneRunner({ goals }: { goals: readonly GoalRecord[] }) {
             return <g className="journey-route-link" key={`${item.id}-link`}><path className="journey-route-link__shadow" d={`M${x} ${minimumY}V${maximumY}`}/><path d={`M${x} ${minimumY}V${maximumY}`}/>{routeYs.map((routeY) => <rect x={x - 5} y={routeY - 5} width="10" height="10" key={routeY}/>)}</g>;
           })}
         </svg>
-        <div className="journey-direction-signs">{activeDirections.map((direction) => { const index = directions.findIndex((candidate) => candidate.id === direction.id); return <span style={{ top: `${laneY(index) - 9}%` }} key={direction.id}><b>Q{index + 1}</b>{direction.title}</span>; })}</div>
+        <div className="journey-direction-signs">{activeDirections.map((direction) => { const index = directions.findIndex((candidate) => candidate.id === direction.id); return <span style={{ top: milestoneDirectionLabelTop(laneY(index)) }} key={direction.id}><b>Q{index + 1}</b>{direction.title}</span>; })}</div>
         <div className="journey-route-gates">{activeDirections.map((direction) => { const index = directions.findIndex((candidate) => candidate.id === direction.id); const finishDate = direction.archivedAt?.slice(0, 10) ?? direction.endDate; return <span style={{ top: `${laneY(index)}%` }} key={direction.id}>{monthKey(direction.startDate) < activeMonth.key && activeMonthIndex > 0 ? <button type="button" className="is-left" onClick={() => changeMonth(activeMonthIndex - 1)} aria-label={`查看${direction.title}的上月路线`}>{"←"}</button> : null}{monthKey(finishDate) > activeMonth.key && activeMonthIndex < months.length - 1 ? <button type="button" className="is-right" onClick={() => changeMonth(activeMonthIndex + 1)} aria-label={`查看${direction.title}的下月路线`}>{"→"}</button> : null}</span>; })}</div>
         {monthItems.map((item) => <button className={`journey-node journey-node--${item.kind}${item.parentCount > 1 ? " journey-node--shared" : ""}${selected?.id === item.id ? " is-selected" : ""}`} style={{ left: `${item.x}%`, top: `${item.y}%` }} type="button" onClick={() => setSelectedId(item.id)} key={item.id} aria-label={`${item.title}，${item.period}`}><PixelMarker kind={item.kind}/>{item.parentCount > 1 ? <em>×{item.parentCount}</em> : null}</button>)}
         <div className="journey-avatar" aria-hidden="true"><i/><i/><i/><i/><i/></div>
