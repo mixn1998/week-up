@@ -90,6 +90,8 @@ test("publishes an allowlisted runtime and shifts the old current release to pre
   assert.equal(JSON.parse(await readFile(join(installRoot, "previous.json"), "utf8")).releaseId, "release-old");
   assert.equal(await exists(join(releaseRoot, "demo-dist", "index.html")), true);
   assert.equal(await exists(join(releaseRoot, "server", "server.mjs")), true);
+  assert.equal(await exists(join(releaseRoot, "lib", "awareness.ts")), true);
+  assert.equal(await exists(join(releaseRoot, "lib", "awareness-analysis-client.ts")), true);
   assert.equal(await exists(join(releaseRoot, "tests")), false);
   assert.equal(await exists(join(releaseRoot, "node_modules")), false);
   assert.equal(await exists(join(releaseRoot, "app")), false);

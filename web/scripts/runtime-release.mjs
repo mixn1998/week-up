@@ -22,6 +22,8 @@ const RUNTIME_FILES = [
   "server/ai-review-service.mjs",
   "server/learning-more-sync.mjs",
   "lib/week-up-domain.ts",
+  "lib/awareness.ts",
+  "lib/awareness-analysis-client.ts",
   "lib/learning-more-client.ts",
   "lib/learning-more-delta.ts",
   "lib/state-patch.ts",
