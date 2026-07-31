@@ -162,6 +162,6 @@ Run one safe maintenance cycle against `%LOCALAPPDATA%\Week UP\backups`, verify 
 
 Start the current release on an alternate port with a temporary data root, request `/api/state`, and stop it. Confirm HTTP success without a `node_modules` directory in the release.
 
-- [ ] **Step 6: Commit and publish**
+- [ ] **Step 6: Commit locally**
 
-Commit the implementation, fast-forward remote `main`, and verify local/remote hashes match.
+Commit the implementation and verify the worktree is clean. Remote publication remains a separate explicit user action.
