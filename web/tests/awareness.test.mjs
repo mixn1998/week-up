@@ -44,18 +44,17 @@ test("mental profile always exposes the fixed eight dimensions", () => {
   assert.ok(profile.every((item) => item.strength === 0));
 });
 
-test("new emotion events keep type and strong-intensity grading separate", () => {
+test("new emotion events store a type without a visible intensity scale", () => {
   const outcome = dispatchWeekUp(createEmptyWeekUpState(), {
     type: "awareness.emotion.record",
     emotionType: "anxious",
-    intensity: 3,
     reason: "等待重要结果",
     occurredAt: "2026-07-31T08:00:00.000Z",
   }, context("2026-07-31T08:00:00.000Z"));
   const entry = outcome.state.awarenessEntries[0];
   assert.equal(entry.kind, "emotion");
   assert.equal(entry.emotionType, "anxious");
-  assert.equal(entry.intensity, 3);
+  assert.equal("intensity" in entry, false);
   assert.equal(entry.level, 2);
 });
 

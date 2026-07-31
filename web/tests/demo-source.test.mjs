@@ -95,8 +95,8 @@ test("adds sparse self-awareness capture and three independent archive tabs", as
   for (const label of ["低落", "焦虑", "愤怒", "愉悦", "激动", "复杂"]) {
     assert.match(awarenessDomain, new RegExp(label));
   }
-  assert.match(awarenessDomain, /明显/);
-  assert.match(awarenessDomain, /极强/);
+  assert.doesNotMatch(awarenessDomain, /EmotionIntensity/);
+  assert.doesNotMatch(awareness, /感受强度/);
   assert.doesNotMatch(awarenessDomain, /偏低/);
   assert.doesNotMatch(awarenessDomain, /高涨/);
   assert.match(awareness, /思想变化/);

@@ -1988,12 +1988,6 @@ button.drawer-plan__time:hover, button.drawer-plan__time:focus-visible { backgro
 .emotion-picker button.is-selected { border-color: var(--ink); background: var(--cyan); color: var(--ink); box-shadow: 2px 2px 0 var(--ink); transform: translate(-1px,-1px); }
 .emotion-picker--mini { display: flex; flex-wrap: wrap; }
 .emotion-picker--mini button { min-height: 32px; padding: 4px 8px; font-size: 11px; }
-.emotion-intensity { display: grid; grid-template-columns: auto repeat(3,minmax(0,1fr)); align-items: center; gap: 5px; }
-.emotion-intensity small { padding-right: 4px; color: var(--muted); font-size: 9px; font-weight: 900; }
-.emotion-intensity button { min-height: 30px; border: 2px solid rgba(48,36,71,.25); background: #fff; color: var(--muted); font-size: 10px; font-weight: 900; cursor: pointer; }
-.emotion-intensity button.is-selected { border-color: var(--ink); background: var(--yellow); color: var(--ink); box-shadow: 2px 2px 0 var(--ink); }
-.emotion-intensity--mini { display: flex; }
-.emotion-intensity--mini button { flex: 0 0 auto; padding: 4px 10px; }
 .awareness-quick__foot { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 12px; padding: 0 2px; color: var(--muted); font-size: 11px; }
 .awareness-quick__foot b { color: var(--violet); font-size: 15px; }
 .awareness-error { margin-top: 9px; padding: 7px 9px; border-left: 4px solid var(--pink); background: rgba(255,77,158,.09); color: #a71f63; font-size: 11px; font-weight: 800; }
@@ -2033,7 +2027,7 @@ button.drawer-plan__time:hover, button.drawer-plan__time:focus-visible { backgro
 .awareness-entry__editor { display: grid; gap: 8px; }
 .awareness-entry__editor > div:last-child { display: flex; align-items: center; gap: 10px; }
 .emotion-event-line { display: flex; height: 34px; align-items: end; gap: 7px; margin: -2px 0 9px 72px; padding-bottom: 3px; border-bottom: 2px solid rgba(48,36,71,.2); }
-.emotion-event-line i { width: 18px; height: calc(var(--emotion-level) * 8px); border: 2px solid var(--ink); background: var(--pink); box-shadow: 2px 2px 0 rgba(48,36,71,.17); }
+.emotion-event-line i { width: 18px; height: 18px; border: 2px solid var(--ink); background: var(--pink); box-shadow: 2px 2px 0 rgba(48,36,71,.17); }
 .awareness-review-list { display: grid; gap: 18px; }
 .awareness-analysis-state { display: grid; gap: 5px; padding: 14px; border: 2px dashed rgba(48,36,71,.38); background: rgba(133,242,255,.12); }
 .awareness-analysis-state b { font-size: 13px; }
@@ -2136,8 +2130,6 @@ button.drawer-plan__time:hover, button.drawer-plan__time:focus-visible { backgro
   .awareness-review-card { padding: 12px; }
   .awareness-capture { padding: 14px; }
   .emotion-picker { grid-template-columns: repeat(3, minmax(62px,1fr)); }
-  .emotion-intensity { grid-template-columns: repeat(3,1fr); }
-  .emotion-intensity small { grid-column: 1 / -1; }
   .awareness-entry { padding-left: 62px; }
   .awareness-entry__meta { width: 45px; }
   .topic-distribution > div { grid-template-columns: 62px 1fr; }

@@ -5,7 +5,6 @@ import {
   awarenessEntriesInRange,
   buildDailyAwarenessSnapshot,
   completeMentalModelDimensionProfile,
-  emotionIntensityFromLegacyLevel,
   emotionTypeFromLegacyLevel,
   legacyLevelForEmotionType,
   monthlyMentalModelShell,
@@ -13,7 +12,6 @@ import {
   weeklyEmotionReviewShell,
   type AwarenessEntry,
   type DailyAwarenessSnapshot,
-  type EmotionIntensity,
   type EmotionLevel,
   type EmotionType,
   type MentalModelDimensionProfile,
@@ -387,8 +385,8 @@ export type WeekUpCommand =
   | { type: "weight.record"; localDate: string; valueKg: number }
   | { type: "weight.target"; valueKg?: number }
   | { type: "awareness.thought.record"; content: string; occurredAt?: string }
-  | { type: "awareness.emotion.record"; level?: EmotionLevel; emotionType?: EmotionType; intensity?: EmotionIntensity; reason?: string; occurredAt?: string }
-  | { type: "awareness.entry.update"; id: string; content?: string; level?: EmotionLevel; emotionType?: EmotionType; intensity?: EmotionIntensity; reason?: string }
+  | { type: "awareness.emotion.record"; level?: EmotionLevel; emotionType?: EmotionType; reason?: string; occurredAt?: string }
+  | { type: "awareness.entry.update"; id: string; content?: string; level?: EmotionLevel; emotionType?: EmotionType; reason?: string }
   | { type: "awareness.entry.remove"; id: string }
   | { type: "awareness.historical-baseline.record"; source: NonNullable<MentalModelVersion["historicalSource"]>; models: readonly MentalModelItem[]; dimensionProfile?: readonly MentalModelDimensionProfile[]; provider: AiProviderId; preferredProvider: AiProviderId; fallbackUsed: boolean; model?: string; reasoningEffort?: string }
   | { type: "awareness.weekly-analysis.succeeded"; id: string; value: WeeklyEmotionAnalysis; provider: AiProviderId; preferredProvider: AiProviderId; fallbackUsed: boolean; model?: string; reasoningEffort?: string }
@@ -658,10 +656,6 @@ function validEmotionLevel(value: number): value is EmotionLevel {
 function validEmotionType(value: unknown): value is EmotionType {
   return value === "low" || value === "anxious" || value === "angry"
     || value === "joyful" || value === "excited" || value === "complex";
-}
-
-function validEmotionIntensity(value: unknown): value is EmotionIntensity {
-  return value === 1 || value === 2 || value === 3;
 }
 
 function awarenessEvidenceIds(state: WeekUpState, model: MentalModelVersion): Set<string> {
@@ -1754,8 +1748,6 @@ export function dispatchWeekUp(state: WeekUpState, command: WeekUpCommand, conte
       if (!validEmotionType(emotionType)) throw new Error("emotion_type_invalid");
       const level = command.level ?? legacyLevelForEmotionType(emotionType);
       if (!validEmotionLevel(level)) throw new Error("emotion_level_invalid");
-      const intensity = command.intensity ?? emotionIntensityFromLegacyLevel(level);
-      if (!validEmotionIntensity(intensity)) throw new Error("emotion_intensity_invalid");
       const occurredAt = command.occurredAt ?? now;
       const entryDate = localDate(occurredAt);
       if (state.dailySettlements.some((settlement) => settlement.localDate === entryDate)) throw new Error("awareness_date_locked");
@@ -1768,7 +1760,6 @@ export function dispatchWeekUp(state: WeekUpState, command: WeekUpCommand, conte
         occurredAt,
         level,
         emotionType,
-        intensity,
         ...(reason ? { reason } : {}),
         createdAt: now,
         updatedAt: now,
@@ -1798,11 +1789,6 @@ export function dispatchWeekUp(state: WeekUpState, command: WeekUpCommand, conte
               const emotionType = command.emotionType ?? entry.emotionType ?? emotionTypeFromLegacyLevel(entry.level);
               if (!validEmotionType(emotionType)) throw new Error("emotion_type_invalid");
               return emotionType;
-            })(),
-            intensity: (() => {
-              const intensity = command.intensity ?? entry.intensity ?? emotionIntensityFromLegacyLevel(entry.level);
-              if (!validEmotionIntensity(intensity)) throw new Error("emotion_intensity_invalid");
-              return intensity;
             })(),
             level: (() => {
               const level = command.level ?? (command.emotionType ? legacyLevelForEmotionType(command.emotionType) : entry.level);

@@ -11,7 +11,6 @@ export type AwarenessTopic = typeof AWARENESS_TOPIC_LABELS[number];
 export type ThoughtForm = typeof THOUGHT_FORM_LABELS[number];
 export type EmotionLevel = 1 | 2 | 3 | 4 | 5;
 export type EmotionType = "low" | "anxious" | "angry" | "joyful" | "excited" | "complex";
-export type EmotionIntensity = 1 | 2 | 3;
 
 export const EMOTION_TYPES: readonly Readonly<{ key: EmotionType; label: string; mark: string; legacyLevel: EmotionLevel }>[] = [
   { key: "low", label: "低落", mark: "▂", legacyLevel: 1 },
@@ -22,23 +21,11 @@ export const EMOTION_TYPES: readonly Readonly<{ key: EmotionType; label: string;
   { key: "complex", label: "复杂", mark: "◇", legacyLevel: 3 },
 ] as const;
 
-export const EMOTION_INTENSITIES: readonly Readonly<{ value: EmotionIntensity; label: string }>[] = [
-  { value: 1, label: "明显" },
-  { value: 2, label: "强烈" },
-  { value: 3, label: "极强" },
-] as const;
-
 export function emotionTypeFromLegacyLevel(level: EmotionLevel): EmotionType {
   if (level <= 2) return "low";
   if (level === 3) return "complex";
   if (level === 4) return "joyful";
   return "excited";
-}
-
-export function emotionIntensityFromLegacyLevel(level: EmotionLevel): EmotionIntensity {
-  if (level === 2 || level === 4) return 1;
-  if (level === 1 || level === 3) return 2;
-  return 3;
 }
 
 export function legacyLevelForEmotionType(type: EmotionType): EmotionLevel {
@@ -69,7 +56,6 @@ export type AwarenessEntry =
       kind: "emotion";
       level: EmotionLevel;
       emotionType?: EmotionType;
-      intensity?: EmotionIntensity;
       reason?: string;
     }>;
 
@@ -89,7 +75,6 @@ export type DailyAwarenessSnapshot = Readonly<{
       occurredAt: string;
       level: EmotionLevel;
       emotionType?: EmotionType;
-      intensity?: EmotionIntensity;
       reason: string;
     }>[];
   }>;
@@ -348,7 +333,6 @@ export function buildDailyAwarenessSnapshot(
             occurredAt: entry.occurredAt,
             level: entry.level,
             emotionType: entry.emotionType ?? emotionTypeFromLegacyLevel(entry.level),
-            intensity: entry.intensity ?? emotionIntensityFromLegacyLevel(entry.level),
             reason: entry.reason.trim(),
           }]
         : []),

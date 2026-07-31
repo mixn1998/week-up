@@ -1,5 +1,4 @@
 import type {
-  EmotionIntensity,
   EmotionType,
   MentalModelDimensionProfile,
   MentalModelItem,
@@ -11,7 +10,6 @@ import type {
 } from "./awareness.ts";
 import {
   completeMentalModelDimensionProfile,
-  emotionIntensityFromLegacyLevel,
   emotionTypeFromLegacyLevel,
 } from "./awareness.ts";
 import type { AiProviderId, AiReviewState, WeekUpState } from "./week-up-domain.ts";
@@ -28,7 +26,6 @@ export type WeeklyEmotionFacts = Readonly<{
     occurredAt: string;
     level: number;
     emotionType: EmotionType;
-    intensity: EmotionIntensity;
     reason?: string;
   }>[];
 }>;
@@ -53,7 +50,6 @@ export type MonthlyAwarenessFacts = Readonly<{
     occurredAt: string;
     level: number;
     emotionType: EmotionType;
-    intensity: EmotionIntensity;
     reason?: string;
   }>[];
   previousModels: readonly MentalModelItem[];
@@ -133,7 +129,6 @@ export function buildWeeklyEmotionFacts(state: WeekUpState, review: WeeklyEmotio
       occurredAt: entry.occurredAt,
       level: entry.level,
       emotionType: entry.emotionType ?? emotionTypeFromLegacyLevel(entry.level),
-      intensity: entry.intensity ?? emotionIntensityFromLegacyLevel(entry.level),
       ...(entry.reason ? { reason: entry.reason } : {}),
     }];
   }).sort((left, right) => left.occurredAt.localeCompare(right.occurredAt));
@@ -176,7 +171,6 @@ function buildModelFacts(
       occurredAt: entry.occurredAt,
       level: entry.level,
       emotionType: entry.emotionType ?? emotionTypeFromLegacyLevel(entry.level),
-      intensity: entry.intensity ?? emotionIntensityFromLegacyLevel(entry.level),
       ...(entry.reason ? { reason: entry.reason } : {}),
     }];
   }).sort((left, right) => left.occurredAt.localeCompare(right.occurredAt));
