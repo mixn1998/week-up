@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import {
   access,
   copyFile,
@@ -137,7 +137,26 @@ async function deriveReleaseId(projectRoot) {
       stdio: ["ignore", "pipe", "ignore"],
     }).trim();
   } catch {
-    revision = "local";
+    const hash = createHash("sha256");
+    const runtimeFiles = [...RUNTIME_FILES, "scripts/run-current-week-up.ps1"];
+    for (const directory of RUNTIME_DIRECTORIES) {
+      const pending = [directory];
+      while (pending.length) {
+        const relativeDirectory = pending.pop();
+        const entries = await readdir(join(projectRoot, relativeDirectory), { withFileTypes: true });
+        entries.sort((left, right) => left.name.localeCompare(right.name));
+        for (const entry of entries) {
+          const relativePath = join(relativeDirectory, entry.name);
+          if (entry.isDirectory()) pending.push(relativePath);
+          else runtimeFiles.push(relativePath);
+        }
+      }
+    }
+    for (const file of runtimeFiles.sort()) {
+      hash.update(file.replaceAll("\\", "/"));
+      hash.update(await readFile(join(projectRoot, file)));
+    }
+    revision = hash.digest("hex").slice(0, 12);
   }
   const releaseId = `${packageJson.version}-${revision}`;
   assertReleaseId(releaseId);

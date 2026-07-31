@@ -95,3 +95,30 @@ test("publishes an allowlisted runtime and shifts the old current release to pre
   assert.equal(await exists(join(releaseRoot, "app")), false);
   assert.equal((await readdir(join(installRoot))).some((name) => name.startsWith(".staging-")), false);
 });
+
+test("derives a deterministic content version when Git is unavailable", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "week-up-runtime-version-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const projectRoot = dirname(fileURLToPath(new URL("../package.json", import.meta.url)));
+  const originalPath = process.env.PATH;
+  process.env.PATH = "";
+  let first;
+  let second;
+  try {
+    first = await publishRuntime({
+      projectRoot,
+      installRoot: join(root, "first-install"),
+      dataRoot: join(root, "first-data"),
+    });
+    second = await publishRuntime({
+      projectRoot,
+      installRoot: join(root, "second-install"),
+      dataRoot: join(root, "second-data"),
+    });
+  } finally {
+    process.env.PATH = originalPath;
+  }
+
+  assert.match(first.releaseId, /^0\.1\.0-[a-f0-9]{12}$/);
+  assert.equal(second.releaseId, first.releaseId);
+});

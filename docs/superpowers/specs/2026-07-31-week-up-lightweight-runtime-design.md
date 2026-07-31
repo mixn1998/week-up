@@ -48,7 +48,7 @@ Week UP/
 - 文档
 - 用户数据
 
-版本号默认采用 `<package-version>-<git-short-sha>`。发布先写入独立 staging 目录，验证必需文件齐全后再原子移动到 `versions/<release-id>`。
+版本号默认采用 `<package-version>-<runtime-content-hash>`。Git 可用时可使用提交短哈希；Git 不可用或安全策略拒绝访问仓库时，必须退回到确定性的运行包内容哈希，不能使用固定的 `local` 标识。发布先写入独立 staging 目录，验证必需文件齐全后再原子移动到 `versions/<release-id>`。
 
 ## 版本保护与清理
 

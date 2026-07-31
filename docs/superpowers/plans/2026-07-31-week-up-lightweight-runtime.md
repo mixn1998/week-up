@@ -28,7 +28,7 @@
 
 **Interfaces:**
 - Produces: `publishRuntime(options)`, `cleanupInstallResidue(options)`, `readProtectedReleaseIds(installRoot)`, and `isSameOrInside(root, candidate)`.
-- Consumes: explicit `projectRoot`, `installRoot`, `dataRoot`, and optional `releaseId`.
+- Consumes: explicit `projectRoot`, `installRoot`, `dataRoot`, and optional `releaseId`; default id uses Git revision or deterministic runtime content hash.
 
 - [ ] **Step 1: Write the failing cleanup test**
 
