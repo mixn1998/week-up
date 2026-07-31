@@ -29,11 +29,12 @@ test("keeps recoverable Node stderr from terminating the persistent service runn
 test("installs one hardened logon task without a periodic trigger", () => {
   assert.match(installerSource, /New-ScheduledTaskTrigger -AtLogOn/);
   assert.doesNotMatch(installerSource, /RepetitionInterval|-Once/);
-  assert.match(installerSource, /-RunLevel Highest/);
+  assert.match(installerSource, /-RunLevel Limited/);
   assert.match(installerSource, /-DontStopOnIdleEnd/);
   assert.match(installerSource, /-DisallowHardTerminate/);
   assert.match(installerSource, /-RestartCount 999/);
   assert.match(installerSource, /-MultipleInstances IgnoreNew/);
+  assert.match(installerSource, /existing task can continue through the compatibility runner/);
 });
 
 test("publishes a lightweight release and starts it through one stable version pointer", () => {
@@ -44,4 +45,11 @@ test("publishes a lightweight release and starts it through one stable version p
   assert.match(stableRunnerSource, /versions/);
   assert.match(stableRunnerSource, /-ProjectRoot \$releaseRoot/);
   assert.match(stableRunnerSource, /install and user data roots must not overlap/);
+});
+
+test("keeps an old scheduled task on the lightweight current release", () => {
+  assert.match(source, /current\.json/);
+  assert.match(source, /Programs\\Week UP/);
+  assert.match(source, /\$PSBoundParameters\.ContainsKey\("ProjectRoot"\)/);
+  assert.match(source, /versions/);
 });

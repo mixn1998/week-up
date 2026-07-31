@@ -1,12 +1,33 @@
 param(
-  [string]$ProjectRoot = (Split-Path -Parent $PSScriptRoot)
+  [string]$ProjectRoot = "",
+  [string]$InstallRoot = (Join-Path $env:LOCALAPPDATA "Programs\Week UP"),
+  [string]$DataRoot = (Join-Path $env:LOCALAPPDATA "Week UP")
 )
 
 $ErrorActionPreference = "Stop"
 
+if (-not $PSBoundParameters.ContainsKey("ProjectRoot") -or [string]::IsNullOrWhiteSpace($ProjectRoot)) {
+  $currentPath = Join-Path $InstallRoot "current.json"
+  if (Test-Path -LiteralPath $currentPath) {
+    $current = Get-Content -LiteralPath $currentPath -Raw | ConvertFrom-Json
+    $releaseId = [string]$current.releaseId
+    if ($releaseId -notmatch '^[A-Za-z0-9][A-Za-z0-9._-]*$') {
+      throw "Week UP current release pointer is invalid."
+    }
+    $versionsRoot = [System.IO.Path]::GetFullPath((Join-Path $InstallRoot "versions"))
+    $releaseRoot = [System.IO.Path]::GetFullPath((Join-Path $versionsRoot $releaseId))
+    if (-not $releaseRoot.StartsWith($versionsRoot + [System.IO.Path]::DirectorySeparatorChar, [System.StringComparison]::OrdinalIgnoreCase)) {
+      throw "Week UP release path escaped the versions root."
+    }
+    $ProjectRoot = $releaseRoot
+  } else {
+    $ProjectRoot = Split-Path -Parent $PSScriptRoot
+  }
+}
+
 $serverPath = Join-Path $ProjectRoot "server\server.mjs"
 $staticEntry = Join-Path $ProjectRoot "demo-dist\index.html"
-$localDataRoot = Join-Path $env:LOCALAPPDATA "Week UP"
+$localDataRoot = [System.IO.Path]::GetFullPath($DataRoot)
 $logRoot = Join-Path $localDataRoot "logs"
 $logPath = Join-Path $logRoot "service.log"
 $previousLogPath = Join-Path $logRoot "service.previous.log"

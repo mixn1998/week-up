@@ -25,7 +25,7 @@ $arguments = "-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -Window
 
 $action = New-ScheduledTaskAction -Execute $powerShellExe -Argument $arguments -WorkingDirectory $InstallRoot
 $trigger = New-ScheduledTaskTrigger -AtLogOn -User $currentUser
-$principal = New-ScheduledTaskPrincipal -UserId $currentUser -LogonType Interactive -RunLevel Highest
+$principal = New-ScheduledTaskPrincipal -UserId $currentUser -LogonType Interactive -RunLevel Limited
 $settings = New-ScheduledTaskSettingsSet `
   -RestartCount 999 `
   -RestartInterval (New-TimeSpan -Minutes 1) `
@@ -42,14 +42,21 @@ if ($null -ne $existingTask -and $existingTask.State -eq "Running") {
   Stop-ScheduledTask -TaskName $TaskName -ErrorAction Stop
 }
 
-Register-ScheduledTask `
-  -TaskName $TaskName `
-  -Action $action `
-  -Trigger $trigger `
-  -Principal $principal `
-  -Settings $settings `
-  -Description "Starts the local Week UP web and SQLite service at user logon and restarts it after failures." `
-  -Force | Out-Null
+try {
+  Register-ScheduledTask `
+    -TaskName $TaskName `
+    -Action $action `
+    -Trigger $trigger `
+    -Principal $principal `
+    -Settings $settings `
+    -Description "Starts the local Week UP web and SQLite service at user logon and restarts it after failures." `
+    -Force | Out-Null
+}
+catch {
+  $legacyRunner = $null -ne $existingTask -and $existingTask.Actions.Arguments -match 'run-week-up-service\.ps1'
+  if (-not $legacyRunner) { throw }
+  Write-Warning "Scheduled task replacement was denied; the existing task can continue through the compatibility runner."
+}
 
 Start-ScheduledTask -TaskName $TaskName
 Write-Output "Installed and started scheduled task: $TaskName"
