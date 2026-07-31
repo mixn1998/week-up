@@ -1541,7 +1541,7 @@ test("migrates old weekly harvests to the completed-only review scope", () => {
     settlements: state.settlements.map((settlement) => ({ ...settlement, incompletePlanIds: ["legacy-open-plan"] })),
   });
 
-  assert.equal(migrated.schemaVersion, 22);
+  assert.equal(migrated.schemaVersion, 23);
   assert.deepEqual(migrated.settlements[0].incompletePlanIds, []);
   assert.equal(migrated.settlements[0].harvest.status, "stale");
   assert.equal(migrated.settlements[0].harvest.text, "旧周报");
@@ -1571,7 +1571,7 @@ test("rebuilds schema 21 weekly totals from completed and still-overdue plans on
     })),
   });
 
-  assert.equal(migrated.schemaVersion, 22);
+  assert.equal(migrated.schemaVersion, 23);
   assert.deepEqual(migrated.settlements[0].planIds, [completedId]);
   assert.deepEqual(migrated.settlements[0].overduePlanIds, []);
 });

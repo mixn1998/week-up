@@ -100,6 +100,10 @@ const server = createServer(async (request, response) => {
       json(response, 200, await aiReview.generate(await readJson(request)));
       return;
     }
+    if (url.pathname === "/week-up-review-api/v1/awareness" && request.method === "POST") {
+      json(response, 200, await aiReview.generateAwareness(await readJson(request)));
+      return;
+    }
     if (url.pathname === "/api/commands" && request.method === "POST") {
       const body = await readJson(request);
       const result = store.dispatchChange(body.command, { expectedRevision: body.expectedRevision, commandId: body.commandId, occurredAt: body.occurredAt });

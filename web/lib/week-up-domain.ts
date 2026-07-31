@@ -1,8 +1,24 @@
 import { colorIdForCategory, isCategoryColorId } from "./category-palette.ts";
 
 import { canRescheduleInsideWeekUp, participatesInOverdueQueue } from "./overdue-policy.ts";
+import {
+  awarenessEntriesInRange,
+  buildDailyAwarenessSnapshot,
+  monthlyMentalModelShell,
+  monthlyThoughtReviewShell,
+  weeklyEmotionReviewShell,
+  type AwarenessEntry,
+  type DailyAwarenessSnapshot,
+  type EmotionLevel,
+  type MentalModelItem,
+  type MentalModelVersion,
+  type MonthlyThoughtAnalysis,
+  type MonthlyThoughtReview,
+  type WeeklyEmotionAnalysis,
+  type WeeklyEmotionReview,
+} from "./awareness.ts";
 
-export const WEEK_UP_SCHEMA_VERSION = 22 as const;
+export const WEEK_UP_SCHEMA_VERSION = 23 as const;
 
 export type AiProviderId = "codex-cli" | "api";
 
@@ -214,6 +230,11 @@ export type WeekUpState = Readonly<{
   completionFacts: readonly CompletionFact[];
   xpTransactions: readonly XpTransaction[];
   weightRevisions: readonly WeightRevision[];
+  awarenessEntries: readonly AwarenessEntry[];
+  dailyAwarenessSnapshots: readonly DailyAwarenessSnapshot[];
+  weeklyEmotionReviews: readonly WeeklyEmotionReview[];
+  monthlyThoughtReviews: readonly MonthlyThoughtReview[];
+  mentalModelVersions: readonly MentalModelVersion[];
   dailySettlements: readonly DailySettlementRecord[];
   settlements: readonly SettlementRecord[];
   skillbooks: readonly SkillbookRecord[];
@@ -358,6 +379,17 @@ export type WeekUpCommand =
   | { type: "plan.follow-template"; id: string }
   | { type: "weight.record"; localDate: string; valueKg: number }
   | { type: "weight.target"; valueKg?: number }
+  | { type: "awareness.thought.record"; content: string; occurredAt?: string }
+  | { type: "awareness.emotion.record"; level: EmotionLevel; reason?: string; occurredAt?: string }
+  | { type: "awareness.entry.update"; id: string; content?: string; level?: EmotionLevel; reason?: string }
+  | { type: "awareness.entry.remove"; id: string }
+  | { type: "awareness.historical-baseline.record"; source: NonNullable<MentalModelVersion["historicalSource"]>; models: readonly MentalModelItem[]; provider: AiProviderId; preferredProvider: AiProviderId; fallbackUsed: boolean; model?: string; reasoningEffort?: string }
+  | { type: "awareness.weekly-analysis.succeeded"; id: string; value: WeeklyEmotionAnalysis; provider: AiProviderId; preferredProvider: AiProviderId; fallbackUsed: boolean; model?: string; reasoningEffort?: string }
+  | { type: "awareness.weekly-analysis.failed"; id: string; message: string }
+  | { type: "awareness.weekly-analysis.retry"; id: string }
+  | { type: "awareness.monthly-analysis.succeeded"; thoughtReviewId?: string; mentalModelVersionId: string; thought?: MonthlyThoughtAnalysis; models: readonly MentalModelItem[]; provider: AiProviderId; preferredProvider: AiProviderId; fallbackUsed: boolean; model?: string; reasoningEffort?: string }
+  | { type: "awareness.monthly-analysis.failed"; thoughtReviewId?: string; mentalModelVersionId: string; message: string }
+  | { type: "awareness.monthly-analysis.retry"; thoughtReviewId?: string; mentalModelVersionId: string }
   | { type: "daily-settlement.generate"; localDate: string }
   | { type: "settlement.generate"; period: SettlementRecord["period"]; startDate: string; endDate: string }
   | { type: "settlement.harvest.succeeded"; id: string; text: string; provider: AiProviderId; preferredProvider: AiProviderId; fallbackUsed: boolean; model?: string; reasoningEffort?: string }
@@ -387,6 +419,11 @@ export function createEmptyWeekUpState(baseUrl = "/learning-more-api"): WeekUpSt
     completionFacts: [],
     xpTransactions: [],
     weightRevisions: [],
+    awarenessEntries: [],
+    dailyAwarenessSnapshots: [],
+    weeklyEmotionReviews: [],
+    monthlyThoughtReviews: [],
+    mentalModelVersions: [],
     dailySettlements: [],
     settlements: [],
     skillbooks: [],
@@ -601,6 +638,40 @@ function localDate(instant: string): string {
   return new Date(Date.parse(instant) + 8 * 3_600_000).toISOString().slice(0, 10);
 }
 
+function assertLocalDate(value: string, field = "local_date"): void {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value) || Number.isNaN(Date.parse(`${value}T00:00:00Z`))) {
+    throw new Error(`${field}_invalid`);
+  }
+}
+
+function validEmotionLevel(value: number): value is EmotionLevel {
+  return Number.isInteger(value) && value >= 1 && value <= 5;
+}
+
+function awarenessEvidenceIds(state: WeekUpState, model: MentalModelVersion): Set<string> {
+  const emotionSnapshotIds = new Set(model.sourceEmotionSnapshotIds);
+  return new Set([
+    ...model.sourceThoughtEntryIds,
+    ...state.dailyAwarenessSnapshots
+      .filter((snapshot) => emotionSnapshotIds.has(snapshot.id))
+      .flatMap((snapshot) => snapshot.emotionEntryIds),
+  ]);
+}
+
+function assertMentalModelEvidence(state: WeekUpState, version: MentalModelVersion, models: readonly MentalModelItem[]): void {
+  const allowed = awarenessEvidenceIds(state, version);
+  for (const model of models) {
+    assertNonEmpty(model.stableKey, "mental_model_key");
+    assertNonEmpty(model.name, "mental_model_name");
+    for (const id of [...model.supportingEntryIds, ...model.counterEvidenceEntryIds]) {
+      if (!allowed.has(id)) throw new Error("awareness_evidence_invalid");
+    }
+    if (model.changeType === "retired" && model.counterEvidenceEntryIds.length === 0 && !model.changeSummary?.trim()) {
+      throw new Error("mental_model_retirement_evidence_empty");
+    }
+  }
+}
+
 function localTime(instant: string): string {
   return new Date(Date.parse(instant) + 8 * 3_600_000).toISOString().slice(11, 16);
 }
@@ -648,14 +719,29 @@ function freezePastDailySettlements(
 ): WeekUpState {
   const today = localDate(now);
   const existingDates = new Set(state.dailySettlements.map((settlement) => settlement.localDate));
-  const dueDates = [...new Set(
-    state.plans
+  const dueDates = [...new Set([
+    ...state.plans
       .filter((plan) => plan.removedAt === undefined && localDate(plan.startAt) < today)
       .map((plan) => localDate(plan.startAt)),
-  )].filter((date) => !existingDates.has(date)).sort();
+    ...state.awarenessEntries
+      .filter((entry) => entry.removedAt === undefined && entry.localDate < today)
+      .map((entry) => entry.localDate),
+  ])].filter((date) => !existingDates.has(date)).sort();
   if (dueDates.length === 0) return state;
+  const snapshots = dueDates.flatMap((date) => {
+    if (!state.awarenessEntries.some((entry) => entry.localDate === date && entry.removedAt === undefined)) return [];
+    const snapshot = buildDailyAwarenessSnapshot(state.awarenessEntries, date, context.id("awareness-day"), now);
+    return snapshot ? [snapshot] : [];
+  });
+  const dueDateSet = new Set(dueDates);
   return {
     ...state,
+    awarenessEntries: state.awarenessEntries.map((entry) =>
+      dueDateSet.has(entry.localDate) && entry.removedAt === undefined
+        ? { ...entry, settlementState: "frozen" as const, updatedAt: now }
+        : entry
+    ),
+    dailyAwarenessSnapshots: [...state.dailyAwarenessSnapshots, ...snapshots],
     dailySettlements: [
       ...state.dailySettlements,
       ...dueDates.map((date): DailySettlementRecord => ({
@@ -1628,6 +1714,216 @@ export function dispatchWeekUp(state: WeekUpState, command: WeekUpCommand, conte
       }
       throw new Error("plan_template_not_found");
     }
+    case "awareness.thought.record": {
+      assertNonEmpty(command.content, "awareness_content");
+      const occurredAt = command.occurredAt ?? now;
+      const entryDate = localDate(occurredAt);
+      if (state.dailySettlements.some((settlement) => settlement.localDate === entryDate)) throw new Error("awareness_date_locked");
+      const id = context.id("awareness-thought");
+      const entry: AwarenessEntry = {
+        id,
+        kind: "thought",
+        localDate: entryDate,
+        occurredAt,
+        content: command.content.trim(),
+        createdAt: now,
+        updatedAt: now,
+        settlementState: "open",
+      };
+      return changed(state, { awarenessEntries: [...state.awarenessEntries, entry] }, id);
+    }
+    case "awareness.emotion.record": {
+      if (!validEmotionLevel(command.level)) throw new Error("emotion_level_invalid");
+      const occurredAt = command.occurredAt ?? now;
+      const entryDate = localDate(occurredAt);
+      if (state.dailySettlements.some((settlement) => settlement.localDate === entryDate)) throw new Error("awareness_date_locked");
+      const id = context.id("awareness-emotion");
+      const reason = command.reason?.trim();
+      const entry: AwarenessEntry = {
+        id,
+        kind: "emotion",
+        localDate: entryDate,
+        occurredAt,
+        level: command.level,
+        ...(reason ? { reason } : {}),
+        createdAt: now,
+        updatedAt: now,
+        settlementState: "open",
+      };
+      return changed(state, { awarenessEntries: [...state.awarenessEntries, entry] }, id);
+    }
+    case "awareness.entry.update": {
+      const entry = state.awarenessEntries.find((item) => item.id === command.id && item.removedAt === undefined);
+      if (!entry) throw new Error("awareness_entry_not_found");
+      if (entry.settlementState === "frozen" || state.dailySettlements.some((settlement) => settlement.localDate === entry.localDate)) {
+        throw new Error("awareness_entry_locked");
+      }
+      const updated: AwarenessEntry = entry.kind === "thought"
+        ? {
+            ...entry,
+            content: (() => {
+              const content = command.content ?? entry.content;
+              assertNonEmpty(content, "awareness_content");
+              return content.trim();
+            })(),
+            updatedAt: now,
+          }
+        : {
+            ...entry,
+            level: (() => {
+              const level = command.level ?? entry.level;
+              if (!validEmotionLevel(level)) throw new Error("emotion_level_invalid");
+              return level;
+            })(),
+            ...((command.reason ?? entry.reason)?.trim() ? { reason: (command.reason ?? entry.reason)!.trim() } : { reason: undefined }),
+            updatedAt: now,
+          };
+      return changed(state, { awarenessEntries: state.awarenessEntries.map((item) => item.id === entry.id ? updated : item) }, entry.id);
+    }
+    case "awareness.entry.remove": {
+      const entry = state.awarenessEntries.find((item) => item.id === command.id && item.removedAt === undefined);
+      if (!entry) throw new Error("awareness_entry_not_found");
+      if (entry.settlementState === "frozen" || state.dailySettlements.some((settlement) => settlement.localDate === entry.localDate)) {
+        throw new Error("awareness_entry_locked");
+      }
+      return changed(state, { awarenessEntries: state.awarenessEntries.map((item) => item.id === entry.id ? { ...item, removedAt: now, updatedAt: now } : item) }, entry.id);
+    }
+    case "awareness.historical-baseline.record": {
+      assertNonEmpty(command.source.sourceKey, "awareness_baseline_source_key");
+      assertNonEmpty(command.source.sourceName, "awareness_baseline_source_name");
+      assertLocalDate(command.source.rangeStart, "awareness_baseline_range_start");
+      assertLocalDate(command.source.rangeEnd, "awareness_baseline_range_end");
+      if (command.source.recordCount < 1 || command.source.recordedDateCount < 1 || command.source.rangeStart > command.source.rangeEnd) {
+        throw new Error("awareness_baseline_source_invalid");
+      }
+      const existing = state.mentalModelVersions.find((version) =>
+        version.scope === "historical-baseline"
+        && version.historicalSource?.sourceKey === command.source.sourceKey
+      );
+      if (existing) return unchanged(state, existing.id);
+      for (const model of command.models) {
+        assertNonEmpty(model.stableKey, "mental_model_key");
+        assertNonEmpty(model.name, "mental_model_name");
+      }
+      const previous = state.mentalModelVersions.at(-1);
+      const revisionNumber = state.mentalModelVersions.filter((version) => version.scope === "historical-baseline").length + 1;
+      const id = context.id("mental-model");
+      const baseline: MentalModelVersion = {
+        id,
+        scope: "historical-baseline",
+        periodKey: `historical-baseline-r${revisionNumber}`,
+        revisionNumber,
+        ...(previous ? { previousVersionId: previous.id } : {}),
+        sourceThoughtEntryIds: [],
+        sourceEmotionSnapshotIds: [],
+        sourceEmotionReviewIds: [],
+        historicalSource: command.source,
+        analysis: {
+          status: "ready",
+          models: command.models,
+          generatedAt: now,
+          provider: command.provider,
+          preferredProvider: command.preferredProvider,
+          fallbackUsed: command.fallbackUsed,
+          ...(command.model ? { model: command.model } : {}),
+          ...(command.reasoningEffort ? { reasoningEffort: command.reasoningEffort } : {}),
+        },
+        frozenAt: now,
+      };
+      return changed(state, { mentalModelVersions: [...state.mentalModelVersions, baseline] }, id);
+    }
+    case "awareness.weekly-analysis.succeeded": {
+      const review = state.weeklyEmotionReviews.find((item) => item.id === command.id);
+      if (!review) throw new Error("emotion_review_not_found");
+      const allowed = new Set(state.dailyAwarenessSnapshots
+        .filter((snapshot) => review.sourceSnapshotIds.includes(snapshot.id))
+        .flatMap((snapshot) => snapshot.emotionEntryIds));
+      if (command.value.evidenceEntryIds.some((id) => !allowed.has(id))) throw new Error("awareness_evidence_invalid");
+      return changed(state, {
+        weeklyEmotionReviews: state.weeklyEmotionReviews.map((item) => item.id === review.id ? {
+          ...item,
+          analysis: {
+            status: "ready" as const,
+            value: command.value,
+            generatedAt: now,
+            provider: command.provider,
+            preferredProvider: command.preferredProvider,
+            fallbackUsed: command.fallbackUsed,
+            ...(command.model ? { model: command.model } : {}),
+            ...(command.reasoningEffort ? { reasoningEffort: command.reasoningEffort } : {}),
+          },
+        } : item),
+      }, review.id);
+    }
+    case "awareness.weekly-analysis.failed": {
+      if (!state.weeklyEmotionReviews.some((item) => item.id === command.id)) throw new Error("emotion_review_not_found");
+      return changed(state, {
+        weeklyEmotionReviews: state.weeklyEmotionReviews.map((item) => item.id === command.id
+          ? { ...item, analysis: { status: "failed" as const, error: command.message.trim() || "awareness_analysis_failed" } }
+          : item),
+      }, command.id);
+    }
+    case "awareness.weekly-analysis.retry": {
+      const review = state.weeklyEmotionReviews.find((item) => item.id === command.id);
+      if (!review) throw new Error("emotion_review_not_found");
+      if (review.analysis.status !== "failed") return unchanged(state, command.id);
+      return changed(state, {
+        weeklyEmotionReviews: state.weeklyEmotionReviews.map((item) => item.id === command.id ? { ...item, analysis: { status: "pending" as const } } : item),
+      }, command.id);
+    }
+    case "awareness.monthly-analysis.succeeded": {
+      const version = state.mentalModelVersions.find((item) => item.id === command.mentalModelVersionId);
+      if (!version) throw new Error("mental_model_version_not_found");
+      assertMentalModelEvidence(state, version, command.models);
+      const thoughtReview = command.thoughtReviewId
+        ? state.monthlyThoughtReviews.find((item) => item.id === command.thoughtReviewId)
+        : undefined;
+      if (command.thoughtReviewId && (!thoughtReview || !command.thought)) throw new Error("thought_review_not_found");
+      if (thoughtReview && command.thought) {
+        const allowed = new Set(thoughtReview.sourceThoughtEntryIds);
+        const evidence = [
+          ...command.thought.classifiedEntries.map((item) => item.entryId),
+          ...command.thought.keyInsights.flatMap((item) => item.evidenceEntryIds),
+          ...command.thought.thoughtShifts.flatMap((item) => item.evidenceEntryIds),
+          ...command.thought.recurringQuestions.flatMap((item) => item.evidenceEntryIds),
+        ];
+        if (evidence.some((id) => !allowed.has(id))) throw new Error("awareness_evidence_invalid");
+      }
+      const meta = {
+        generatedAt: now,
+        provider: command.provider,
+        preferredProvider: command.preferredProvider,
+        fallbackUsed: command.fallbackUsed,
+        ...(command.model ? { model: command.model } : {}),
+        ...(command.reasoningEffort ? { reasoningEffort: command.reasoningEffort } : {}),
+      };
+      return changed(state, {
+        monthlyThoughtReviews: thoughtReview && command.thought
+          ? state.monthlyThoughtReviews.map((item) => item.id === thoughtReview.id ? { ...item, analysis: { status: "ready" as const, value: command.thought!, ...meta } } : item)
+          : state.monthlyThoughtReviews,
+        mentalModelVersions: state.mentalModelVersions.map((item) => item.id === version.id ? { ...item, analysis: { status: "ready" as const, models: command.models, ...meta } } : item),
+      }, version.id);
+    }
+    case "awareness.monthly-analysis.failed": {
+      if (!state.mentalModelVersions.some((item) => item.id === command.mentalModelVersionId)) throw new Error("mental_model_version_not_found");
+      return changed(state, {
+        monthlyThoughtReviews: command.thoughtReviewId
+          ? state.monthlyThoughtReviews.map((item) => item.id === command.thoughtReviewId ? { ...item, analysis: { status: "failed" as const, error: command.message.trim() || "awareness_analysis_failed" } } : item)
+          : state.monthlyThoughtReviews,
+        mentalModelVersions: state.mentalModelVersions.map((item) => item.id === command.mentalModelVersionId ? { ...item, analysis: { status: "failed" as const, error: command.message.trim() || "awareness_analysis_failed" } } : item),
+      }, command.mentalModelVersionId);
+    }
+    case "awareness.monthly-analysis.retry": {
+      const version = state.mentalModelVersions.find((item) => item.id === command.mentalModelVersionId);
+      if (!version) throw new Error("mental_model_version_not_found");
+      if (version.analysis.status !== "failed") return unchanged(state, version.id);
+      return changed(state, {
+        monthlyThoughtReviews: command.thoughtReviewId
+          ? state.monthlyThoughtReviews.map((item) => item.id === command.thoughtReviewId ? { ...item, analysis: { status: "pending" as const } } : item)
+          : state.monthlyThoughtReviews,
+        mentalModelVersions: state.mentalModelVersions.map((item) => item.id === version.id ? { ...item, analysis: { status: "pending" as const } } : item),
+      }, version.id);
+    }
     case "weight.record": {
       if (!Number.isFinite(command.valueKg) || command.valueKg < 20 || command.valueKg > 300) throw new Error("weight_invalid");
       const previous = [...state.weightRevisions].reverse().find((item) => item.localDate === command.localDate);
@@ -1644,21 +1940,33 @@ export function dispatchWeekUp(state: WeekUpState, command: WeekUpCommand, conte
       if (existing) return unchanged(state, existing.id);
       if (command.localDate >= localDate(now)) throw new Error("daily_settlement_not_due");
       const id = context.id("daily-settlement");
+      const hasAwarenessEntries = state.awarenessEntries.some((entry) => entry.localDate === command.localDate && entry.removedAt === undefined);
+      const awarenessSnapshot = hasAwarenessEntries
+        ? buildDailyAwarenessSnapshot(state.awarenessEntries, command.localDate, context.id("awareness-day"), now)
+        : undefined;
       const settlement: DailySettlementRecord = {
         id,
         localDate: command.localDate,
         settledAt: now,
         ...dailySettlementSnapshot(state, command.localDate),
       };
-      return changed(state, { dailySettlements: [...state.dailySettlements, settlement] }, id);
+      return changed(state, {
+        awarenessEntries: state.awarenessEntries.map((entry) =>
+          entry.localDate === command.localDate && entry.removedAt === undefined
+            ? { ...entry, settlementState: "frozen" as const, updatedAt: now }
+            : entry
+        ),
+        dailyAwarenessSnapshots: awarenessSnapshot
+          ? [...state.dailyAwarenessSnapshots, awarenessSnapshot]
+          : state.dailyAwarenessSnapshots,
+        dailySettlements: [...state.dailySettlements, settlement],
+      }, id);
     }
     case "settlement.generate": {
       const key = `${command.period}:${command.startDate}:${command.endDate}`;
       const existing = state.settlements.find((item) => `${item.period}:${item.startDate}:${item.endDate}` === key);
       if (existing) return unchanged(state, existing.id);
-      const settlementState = command.period === "week"
-        ? freezePastDailySettlements(state, now, context)
-        : state;
+      const settlementState = freezePastDailySettlements(state, now, context);
       const snapshot = settlementSnapshot(settlementState, command.period, command.startDate, command.endDate, now);
       const id = context.id("settlement");
       const settlement: SettlementRecord = {
@@ -1670,7 +1978,49 @@ export function dispatchWeekUp(state: WeekUpState, command: WeekUpCommand, conte
         ...snapshot,
         harvest: { status: "pending" },
       };
-      return changed(settlementState, { settlements: [...settlementState.settlements, settlement] }, id);
+      const weeklyReview = command.period === "week"
+        ? weeklyEmotionReviewShell(
+            settlementState.dailyAwarenessSnapshots,
+            command.startDate,
+            command.endDate,
+            context.id("emotion-review"),
+            now,
+          )
+        : undefined;
+      const monthlyThoughtReview = command.period === "month"
+        ? monthlyThoughtReviewShell(
+            settlementState.dailyAwarenessSnapshots,
+            command.startDate,
+            command.endDate,
+            context.id("thought-review"),
+            now,
+          )
+        : undefined;
+      const previousModel = settlementState.mentalModelVersions.at(-1);
+      const monthlyModel = command.period === "month"
+        ? monthlyMentalModelShell(
+            settlementState.dailyAwarenessSnapshots,
+            settlementState.weeklyEmotionReviews,
+            monthlyThoughtReview,
+            command.startDate,
+            command.endDate,
+            context.id("mental-model"),
+            now,
+            previousModel?.id,
+          )
+        : undefined;
+      return changed(settlementState, {
+        settlements: [...settlementState.settlements, settlement],
+        weeklyEmotionReviews: weeklyReview
+          ? [...settlementState.weeklyEmotionReviews, weeklyReview]
+          : settlementState.weeklyEmotionReviews,
+        monthlyThoughtReviews: monthlyThoughtReview
+          ? [...settlementState.monthlyThoughtReviews, monthlyThoughtReview]
+          : settlementState.monthlyThoughtReviews,
+        mentalModelVersions: monthlyModel
+          ? [...settlementState.mentalModelVersions, monthlyModel]
+          : settlementState.mentalModelVersions,
+      }, id);
     }
     case "settlement.harvest.succeeded": {
       assertNonEmpty(command.text, "harvest_text");
@@ -2003,7 +2353,7 @@ export function migrateWeekUpState(value: unknown): WeekUpState {
   if (value === undefined || value === null) return createEmptyWeekUpState();
   if (typeof value !== "object") throw new Error("database_state_invalid");
   const version = (value as { schemaVersion?: unknown }).schemaVersion;
-  if (version !== 1 && version !== 2 && version !== 3 && version !== 4 && version !== 5 && version !== 6 && version !== 7 && version !== 8 && version !== 9 && version !== 10 && version !== 11 && version !== 12 && version !== 13 && version !== 14 && version !== 15 && version !== 16 && version !== 17 && version !== 18 && version !== 19 && version !== 20 && version !== 21 && version !== WEEK_UP_SCHEMA_VERSION) throw new Error("database_schema_unsupported");
+  if (version !== 1 && version !== 2 && version !== 3 && version !== 4 && version !== 5 && version !== 6 && version !== 7 && version !== 8 && version !== 9 && version !== 10 && version !== 11 && version !== 12 && version !== 13 && version !== 14 && version !== 15 && version !== 16 && version !== 17 && version !== 18 && version !== 19 && version !== 20 && version !== 21 && version !== 22 && version !== WEEK_UP_SCHEMA_VERSION) throw new Error("database_schema_unsupported");
   type MigratableSettlement = Omit<SettlementRecord, "harvest" | "planIds" | "overduePlanIds"> & Partial<Pick<SettlementRecord, "planIds" | "overduePlanIds">> & {
     harvest?: SettlementRecord["harvest"];
     reflection?: string;
@@ -2021,8 +2371,8 @@ export function migrateWeekUpState(value: unknown): WeekUpState {
     completionFactId?: string;
     revertedAt?: string;
   }>;
-  const raw = value as Omit<WeekUpState, "schemaVersion" | "attributeCategories" | "projectCategories" | "plans" | "projects" | "learningMoreCourses" | "learningMoreLessons" | "completionFacts" | "dailySettlements" | "settlements" | "aiReview"> & {
-    schemaVersion: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 17 | 18 | 19 | 20 | 21 | 22;
+  const raw = value as Omit<WeekUpState, "schemaVersion" | "attributeCategories" | "projectCategories" | "plans" | "projects" | "learningMoreCourses" | "learningMoreLessons" | "completionFacts" | "dailySettlements" | "settlements" | "aiReview" | "awarenessEntries" | "dailyAwarenessSnapshots" | "weeklyEmotionReviews" | "monthlyThoughtReviews" | "mentalModelVersions"> & {
+    schemaVersion: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 17 | 18 | 19 | 20 | 21 | 22 | 23;
     attributeCategories?: readonly MigratableCategory[];
     projectCategories?: readonly MigratableCategory[];
     plans: readonly (Omit<PlanRecord, "rewardMode"> & Partial<Pick<PlanRecord, "rewardMode">>)[];
@@ -2034,6 +2384,11 @@ export function migrateWeekUpState(value: unknown): WeekUpState {
     settlements: readonly MigratableSettlement[];
     aiReview?: Partial<AiReviewState> & { baseUrl: string };
     preferences?: WeekUpState["preferences"];
+    awarenessEntries?: readonly AwarenessEntry[];
+    dailyAwarenessSnapshots?: readonly DailyAwarenessSnapshot[];
+    weeklyEmotionReviews?: readonly WeeklyEmotionReview[];
+    monthlyThoughtReviews?: readonly MonthlyThoughtReview[];
+    mentalModelVersions?: readonly MentalModelVersion[];
   };
   const legacyExecutionRecords = raw.executionRecords ?? [];
   const activeFactCountByPlan = raw.completionFacts.reduce<Map<string, number>>((counts, fact) => {
@@ -2175,6 +2530,11 @@ export function migrateWeekUpState(value: unknown): WeekUpState {
     learningMoreCourses: raw.schemaVersion < 5 ? [] : raw.learningMoreCourses ?? [],
     learningMoreLessons: raw.schemaVersion < 5 ? [] : (raw.learningMoreLessons ?? []).map((lesson, index) => ({ ...lesson, scheduleItemId: lesson.scheduleItemId!, scheduledDate: lesson.scheduledDate!, order: lesson.order ?? index })),
     completionFacts,
+    awarenessEntries: raw.awarenessEntries ?? [],
+    dailyAwarenessSnapshots: raw.dailyAwarenessSnapshots ?? [],
+    weeklyEmotionReviews: raw.weeklyEmotionReviews ?? [],
+    monthlyThoughtReviews: raw.monthlyThoughtReviews ?? [],
+    mentalModelVersions: raw.mentalModelVersions ?? [],
     dailySettlements,
     settlements,
     preferences: raw.preferences ?? {},

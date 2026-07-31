@@ -2,6 +2,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { buildReviewSummaryFacts, createReviewSummaryClient, type AiServiceStatus } from "./review-summary-client.ts";
 import {
+  buildMonthlyAwarenessFacts,
+  buildWeeklyEmotionFacts,
+  createAwarenessAnalysisClient,
+} from "./awareness-analysis-client.ts";
+import {
   createEmptyWeekUpState,
   currentWeightEntries,
   totalXpForAttribute,
@@ -234,11 +239,13 @@ export function useWeekUp() {
   const [persistenceStatus, setPersistenceStatus] = useState<"connecting" | "online" | "offline">(() => repository?.status ?? "connecting");
   const [syncing, setSyncing] = useState(false);
   const [generatingHarvestIds, setGeneratingHarvestIds] = useState<readonly string[]>([]);
+  const [generatingAwarenessIds, setGeneratingAwarenessIds] = useState<readonly string[]>([]);
   const [aiStatus, setAiStatus] = useState<AiServiceStatus>();
   const [checkingAi, setCheckingAi] = useState(false);
   const [projectionDate, setProjectionDate] = useState(() => dateInShanghai(new Date().toISOString()));
   const syncingRef = useRef(false);
   const harvestsInFlightRef = useRef(new Set<string>());
+  const awarenessInFlightRef = useRef(new Set<string>());
   useEffect(() => {
     if (!store) return;
     const unsubscribe = store.subscribe(setState);
@@ -361,6 +368,75 @@ export function useWeekUp() {
         setGeneratingHarvestIds((current) => current.filter((id) => id !== pending.id));
       });
   }, [ready, state.aiReview, state.settlements, refreshAiStatus]);
+  useEffect(() => {
+    if (!ready || !store) return;
+    const pendingModel = state.mentalModelVersions.find((version) =>
+      version.analysis.status === "pending" && !awarenessInFlightRef.current.has(version.id)
+    );
+    const pendingEmotion = !pendingModel
+      ? state.weeklyEmotionReviews.find((review) =>
+          review.analysis.status === "pending" && !awarenessInFlightRef.current.has(review.id)
+        )
+      : undefined;
+    if (!pendingModel && !pendingEmotion) return;
+    const id = pendingModel?.id ?? pendingEmotion!.id;
+    awarenessInFlightRef.current.add(id);
+    setGeneratingAwarenessIds((current) => current.includes(id) ? current : [...current, id]);
+    const snapshot = store.snapshot();
+    const client = createAwarenessAnalysisClient(snapshot.aiReview);
+    const operation = pendingModel
+      ? client.generate(buildMonthlyAwarenessFacts(
+          snapshot,
+          pendingModel.sourceThoughtReviewId
+            ? snapshot.monthlyThoughtReviews.find((review) => review.id === pendingModel.sourceThoughtReviewId)
+            : undefined,
+          pendingModel,
+        ))
+      : client.generate(buildWeeklyEmotionFacts(snapshot, pendingEmotion!));
+    void operation
+      .then(async (response) => {
+        const meta = {
+          provider: response.provider,
+          preferredProvider: response.preferredProvider,
+          fallbackUsed: response.fallbackUsed,
+          ...(response.model ? { model: response.model } : {}),
+          ...(response.reasoningEffort ? { reasoningEffort: response.reasoningEffort } : {}),
+        };
+        if (response.result.kind === "weekly-emotion") {
+          await store.dispatch({
+            type: "awareness.weekly-analysis.succeeded",
+            id: response.result.reviewId,
+            value: response.result.emotion,
+            ...meta,
+          });
+        } else {
+          await store.dispatch({
+            type: "awareness.monthly-analysis.succeeded",
+            ...(response.result.thoughtReviewId ? { thoughtReviewId: response.result.thoughtReviewId } : {}),
+            mentalModelVersionId: response.result.mentalModelVersionId,
+            ...(response.result.thought ? { thought: response.result.thought } : {}),
+            models: response.result.models,
+            ...meta,
+          });
+        }
+        await refreshAiStatus(false);
+      })
+      .catch((error) => {
+        const message = error instanceof Error ? error.message : "awareness_analysis_failed";
+        return pendingModel
+          ? store.dispatch({
+              type: "awareness.monthly-analysis.failed",
+              ...(pendingModel.sourceThoughtReviewId ? { thoughtReviewId: pendingModel.sourceThoughtReviewId } : {}),
+              mentalModelVersionId: pendingModel.id,
+              message,
+            })
+          : store.dispatch({ type: "awareness.weekly-analysis.failed", id: pendingEmotion!.id, message });
+      })
+      .finally(() => {
+        awarenessInFlightRef.current.delete(id);
+        setGeneratingAwarenessIds((current) => current.filter((item) => item !== id));
+      });
+  }, [ready, state.aiReview, state.weeklyEmotionReviews, state.monthlyThoughtReviews, state.mentalModelVersions, refreshAiStatus]);
   const projectionNow = useMemo(() => new Date(`${projectionDate}T12:00:00+08:00`), [projectionDate]);
-  return { state, view: useMemo(() => projectWeekUpView(state, projectionNow), [state, projectionNow]), ready, persistenceStatus, syncing, generatingHarvestIds, aiStatus, checkingAi, dispatch, replace, syncLearningMore, refreshAiStatus };
+  return { state, view: useMemo(() => projectWeekUpView(state, projectionNow), [state, projectionNow]), ready, persistenceStatus, syncing, generatingHarvestIds, generatingAwarenessIds, aiStatus, checkingAi, dispatch, replace, syncLearningMore, refreshAiStatus };
 }

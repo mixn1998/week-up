@@ -27,9 +27,11 @@ import { useWeekUp } from "../lib/use-week-up";
 import { AiStatusControl } from "./ai-status-control";
 import { ExecutionCompletionModal } from "./execution-completion-modal";
 import { MilestoneRunner } from "./milestone-runner";
+import { AwarenessQuickCapture, AwarenessView } from "./awareness-view";
+import type { AwarenessEntry, EmotionLevel, MentalModelVersion } from "../lib/awareness";
 import { exportWeekUpBackup, importWeekUpBackup, type AttributeCategoryRecord, type AttributeRecord, type CompletionFact, type GoalRecord, type LearningMoreCourse, type LearningMoreLesson, type PlanRecord, type PlanTimeSegment, type PlanTimeSegmentInput, type ProjectRecord, type RewardUnit, type SettlementRecord, type SkillbookRecord, type WeekUpCommand, type WeekUpState } from "../lib/week-up-domain";
 
-type TabId = "today" | "week" | "month" | "calendar" | "action-config" | "growth" | "weight";
+type TabId = "today" | "week" | "month" | "calendar" | "action-config" | "awareness" | "growth" | "weight";
 
 const PAGE_META: Record<TabId, { icon: string; label: string; eyebrow: string }> = {
   today: { icon: "☀", label: "今日", eyebrow: "TODAY" },
@@ -37,6 +39,7 @@ const PAGE_META: Record<TabId, { icon: string; label: string; eyebrow: string }>
   week: { icon: "⚑", label: "本周目标", eyebrow: "WEEK QUEST" },
   month: { icon: "☾", label: "本月方向", eyebrow: "MONTH PATH" },
   "action-config": { icon: "⚙", label: "行动配置", eyebrow: "CONFIG" },
+  awareness: { icon: "◉", label: "自我觉察", eyebrow: "SELF AWARENESS" },
   growth: { icon: "◆", label: "成就图鉴", eyebrow: "ATLAS" },
   weight: { icon: "⌁", label: "体重趋势", eyebrow: "BODY TRACK" },
 };
@@ -45,8 +48,9 @@ const NAV_ITEMS: Array<{ id: Exclude<TabId, "weight">; icon: string; label: stri
   { id: "today", ...PAGE_META.today, desktopLabel: "立即出发！" },
   { id: "calendar", ...PAGE_META.calendar },
   { id: "week", ...PAGE_META.week },
-  { id: "month", ...PAGE_META.month },
   { id: "action-config", icon: "⚙", label: "行动配置", eyebrow: "CONFIG" },
+  { id: "awareness", ...PAGE_META.awareness },
+  { id: "month", ...PAGE_META.month },
   { id: "growth", ...PAGE_META.growth },
 ];
 
@@ -374,11 +378,15 @@ function TodayView({
   attributes,
   completionFacts,
   weights,
+  awarenessEntries,
   onComplete,
   onExternalComplete,
   onQuickAdd,
   onOpenWeight,
   onRecordWeight,
+  onRecordThought,
+  onRecordEmotion,
+  onOpenAwareness,
   onEdit,
   onUndo,
   onRemove,
@@ -388,11 +396,15 @@ function TodayView({
   attributes: Attribute[];
   completionFacts: readonly CompletionFact[];
   weights: WeightEntry[];
+  awarenessEntries: readonly AwarenessEntry[];
   onComplete: (id: string, segmentId?: string) => void;
   onExternalComplete: () => void;
   onQuickAdd: () => void;
   onOpenWeight: () => void;
   onRecordWeight: (value: number) => void;
+  onRecordThought: (content: string) => Promise<unknown>;
+  onRecordEmotion: (level: EmotionLevel, reason?: string) => Promise<unknown>;
+  onOpenAwareness: () => void;
   onEdit: (id: string) => void;
   onUndo: (id: string, segmentId?: string) => void;
   onRemove: (id: string) => void;
@@ -466,6 +478,7 @@ function TodayView({
             <div className="section-heading section-heading--small"><div><span className="eyebrow">GROWTH</span><h2>今日属性值<span className="growth-up-accent">UP！</span></h2></div><div className="growth-heading-actions"><span className="growth-total">今日总属性增长 <b>+{dailyTotalGain} XP</b></span>{dailyGains.length > 5 ? <button className="week-xp week-xp--button" onClick={() => setDailyGrowthOpen((current) => !current)}>{dailyGrowthOpen ? "收起" : `展开全部 ${dailyGains.length} 项`}</button> : <span className="week-xp">今日 {dailyGains.length} 项</span>}</div></div>
             <div className="compact-badges">{dailyGains.length === 0 ? <div className="mini-empty">今天还没有属性提升，完成行动后会在这里点亮。</div> : visibleDailyGains.map(({ attribute, amount }) => <PixelBadge key={attribute.id} attribute={attribute} compact gain={amount} />)}</div>
           </section>
+          <AwarenessQuickCapture entries={awarenessEntries} onRecordThought={onRecordThought} onRecordEmotion={onRecordEmotion} onExplore={onOpenAwareness} />
           <section className="pixel-card weight-widget">
             <div className="section-heading section-heading--small"><div><span className="eyebrow">BODY TRACK</span><h2>体重趋势</h2></div><button className="text-button" onClick={onOpenWeight}>展开 →</button></div>
             {!hasTodayWeight && <QuickWeightEntry onSave={onRecordWeight} />}
@@ -1619,11 +1632,12 @@ export default function Home() {
         <header className="topbar"><div className="mobile-brand"><img className="brand-mark" src="/week-up-logo.svg" alt="" /><span>WEEK <b>UP!</b></span></div><div className="breadcrumb"><span>{activeNav.eyebrow}</span><b>{activeNav.label}</b></div><div className="top-actions"><button className="sync-status" onClick={() => void weekUp.syncLearningMore()} disabled={weekUp.syncing}><i />{weekUp.syncing ? "Learning MORE 同步中" : weekUp.state.learningMore.lastError ? "Learning MORE 暂时离线" : weekUp.state.learningMore.lastSyncedAt ? "Learning MORE 已同步" : "点击连接 Learning MORE"}</button><AiStatusControl config={weekUp.state.aiReview} status={weekUp.aiStatus} checking={weekUp.checkingAi} onConfigure={(value) => void weekUp.dispatch({ type: "ai-review.configure", ...value })} onRefresh={() => void weekUp.refreshAiStatus(true)} /><button className="icon-button" aria-label="设置" onClick={() => setSettingsOpen(true)}>⚙</button></div></header>
         <div className="page-wrap">
           {weekUp.persistenceStatus === "offline" && <section className="persistence-alert" role="alert"><b>本地服务暂时离线</b><span>当前展示的是最近缓存，修改操作不会生效。请重新启动 Week UP 服务后刷新页面。</span></section>}
-          {tab === "today" && <TodayView plans={plans} attributes={attributes} completionFacts={weekUp.state.completionFacts} weights={weights} onComplete={completePlan} onExternalComplete={completeLearningPlan} onQuickAdd={() => openQuickAdd()} onOpenWeight={() => setTab("weight")} onRecordWeight={addWeight} onEdit={(id) => setPlanEditor(weekUp.state.plans.find((plan) => plan.id === id) ?? null)} onUndo={undoPlan} onRemove={(id) => void weekUp.dispatch({ type: "plan.remove", id })} onRescheduleOverdue={(id) => setOverdueEditor(weekUp.state.plans.find((plan) => plan.id === id) ?? null)} />}
+          {tab === "today" && <TodayView plans={plans} attributes={attributes} completionFacts={weekUp.state.completionFacts} weights={weights} awarenessEntries={weekUp.state.awarenessEntries} onComplete={completePlan} onExternalComplete={completeLearningPlan} onQuickAdd={() => openQuickAdd()} onOpenWeight={() => setTab("weight")} onRecordWeight={addWeight} onRecordThought={(content) => weekUp.dispatch({ type: "awareness.thought.record", content })} onRecordEmotion={(level, reason) => weekUp.dispatch({ type: "awareness.emotion.record", level, ...(reason ? { reason } : {}) })} onOpenAwareness={() => setTab("awareness")} onEdit={(id) => setPlanEditor(weekUp.state.plans.find((plan) => plan.id === id) ?? null)} onUndo={undoPlan} onRemove={(id) => void weekUp.dispatch({ type: "plan.remove", id })} onRescheduleOverdue={(id) => setOverdueEditor(weekUp.state.plans.find((plan) => plan.id === id) ?? null)} />}
           {tab === "week" && <WeekDashboard attributes={attributes} plans={plans} planRecords={weekUp.state.plans.filter((plan) => plan.removedAt === undefined)} goals={weekUp.state.goals} dailySettlements={weekUp.state.dailySettlements} settlements={weekUp.state.settlements} initialRange={selectedWeekRange} generatingHarvestIds={weekUp.generatingHarvestIds} onRetryHarvest={(id) => void weekUp.dispatch({ type: "settlement.harvest.retry", id })} onNewGoal={() => setGoalEditor({ period: "week" })} onEditGoal={(goal) => setGoalEditor({ period: "week", initial: goal })} onQuickAdd={(goalIds) => openQuickAdd(goalIds)} onOpenCalendar={() => openCalendar("week")} onOpenGrowth={() => setTab("growth")} onComplete={completePlan} onEditPlan={(id) => setPlanEditor(weekUp.state.plans.find((plan) => plan.id === id) ?? null)} onUndoPlan={undoPlan} onRemovePlan={(id) => void weekUp.dispatch({ type: "plan.remove", id })} onRescheduleOverdue={(id) => setOverdueEditor(weekUp.state.plans.find((plan) => plan.id === id) ?? null)} />}
           {tab === "month" && <MonthDashboard attributes={attributes} plans={plans} planRecords={weekUp.state.plans.filter((plan) => plan.removedAt === undefined)} goals={weekUp.state.goals} projects={weekUp.state.projects} projectCategories={weekUp.state.projectCategories} dailySettlements={weekUp.state.dailySettlements} settlements={weekUp.state.settlements} weights={weights} generatingHarvestIds={weekUp.generatingHarvestIds} onRetryHarvest={(id) => void weekUp.dispatch({ type: "settlement.harvest.retry", id })} onNewGoal={() => setGoalEditor({ period: "month" })} onEditGoal={(goal) => setGoalEditor({ period: "month", initial: goal })} onOpenWeek={(weekRange) => { setSelectedWeekRange(weekRange); setTab("week"); }} onOpenCalendar={() => openCalendar("month")} onOpenWeight={() => setTab("weight")} />}
           {tab === "calendar" && <CalendarView plans={calendarContent === "timeline" ? weekUp.view.timelinePlans : plans} unconfiguredPlans={plans} untimedCompletionPlans={weekUp.view.timelinePlans} settledDates={weekUp.state.dailySettlements.map((settlement) => settlement.localDate)} initialMode={calendarInitialMode} content={calendarContent} onEditPlan={(id) => setPlanEditor(weekUp.state.plans.find((plan) => plan.id === id) ?? null)} />}
           {tab === "action-config" && <ActionConfigView attributes={attributes} attributeCategories={weekUp.state.attributeCategories} projectCategories={weekUp.state.projectCategories} projects={weekUp.state.projects.filter((project) => project.source === "week-up" && project.archivedAt === undefined)} courses={weekUp.state.learningMoreCourses} courseProjects={weekUp.state.projects.filter((project) => project.source === "learning-more" && project.archivedAt === undefined)} onNewAttribute={() => setAttributeEditor("new")} onEditAttribute={(attribute) => setAttributeEditor(weekUp.state.attributes.find((item) => item.id === attribute.id) ?? null)} onNewProject={() => setProjectEditor("new")} onEditProject={setProjectEditor} onConfigureCourse={setProjectEditor} onCreateCategory={(name) => { void weekUp.dispatch({ type: "attribute-category.create", name }); }} onRenameCategory={(id, name) => { void weekUp.dispatch({ type: "attribute-category.rename", id, name }); }} onDeleteCategory={(id) => { void weekUp.dispatch({ type: "attribute-category.delete", id }); }} onCreateProjectCategory={(name, color) => { void weekUp.dispatch({ type: "project-category.create", name, color }); }} onRenameProjectCategory={(id, name, color) => { void weekUp.dispatch({ type: "project-category.rename", id, name, color }); }} onDeleteProjectCategory={(id) => { void weekUp.dispatch({ type: "project-category.delete", id }); }} />}
+          {tab === "awareness" && <AwarenessView entries={weekUp.state.awarenessEntries} weeklyReviews={weekUp.state.weeklyEmotionReviews} monthlyReviews={weekUp.state.monthlyThoughtReviews} mentalModels={weekUp.state.mentalModelVersions} generatingIds={weekUp.generatingAwarenessIds} onUpdate={(entry, value, level) => entry.kind === "thought" ? weekUp.dispatch({ type: "awareness.entry.update", id: entry.id, content: value }) : weekUp.dispatch({ type: "awareness.entry.update", id: entry.id, level: level ?? entry.level, reason: value })} onRemove={(id) => weekUp.dispatch({ type: "awareness.entry.remove", id })} onRetryWeekly={(id) => weekUp.dispatch({ type: "awareness.weekly-analysis.retry", id })} onRetryMonthly={(version: MentalModelVersion) => weekUp.dispatch({ type: "awareness.monthly-analysis.retry", ...(version.sourceThoughtReviewId ? { thoughtReviewId: version.sourceThoughtReviewId } : {}), mentalModelVersionId: version.id })} />}
           {tab === "growth" && <GrowthView attributes={weekUp.view.catalogAttributes} skillbooks={weekUp.state.skillbooks} goals={weekUp.state.goals} state={weekUp.state} />}
           {tab === "weight" && <WeightView entries={weights} target={weekUp.state.preferences.targetWeightKg} onTarget={(valueKg) => void weekUp.dispatch({ type: "weight.target", valueKg })} onCorrectToday={addWeight} />}
         </div>

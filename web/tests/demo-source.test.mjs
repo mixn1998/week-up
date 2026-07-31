@@ -77,9 +77,25 @@ test("keeps navigation ordered and weight accessible only from Today", async () 
   const page = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
   const navigation = page.match(/const NAV_ITEMS:[\s\S]*?= \[([\s\S]*?)\];/)?.[1] ?? "";
   const ids = [...navigation.matchAll(/id: "([^"]+)"/g)].map((match) => match[1]);
-  assert.deepEqual(ids, ["today", "calendar", "week", "month", "action-config", "growth"]);
+  assert.deepEqual(ids, ["today", "calendar", "week", "action-config", "awareness", "month", "growth"]);
   assert.doesNotMatch(navigation, /id: "weight"/);
   assert.match(page, /onOpenWeight=\{\(\) => setTab\("weight"\)\}/);
+});
+
+test("adds sparse self-awareness capture and three independent archive tabs", async () => {
+  const [page, awareness] = await Promise.all([
+    readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/awareness-view.tsx", import.meta.url), "utf8"),
+  ]);
+  assert.match(page, /awarenessEntries=\{weekUp\.state\.awarenessEntries\}/);
+  assert.ok(page.indexOf("<AwarenessQuickCapture") < page.indexOf('className="pixel-card weight-widget"'));
+  assert.match(awareness, /记录一个值得留下的想法/);
+  assert.match(awareness, /记录一次强烈感受/);
+  assert.match(awareness, /思想变化/);
+  assert.match(awareness, /情绪流/);
+  assert.match(awareness, /心智模型/);
+  assert.match(awareness, /空白日期不补值/);
+  assert.match(awareness, /历史思想形成的当前心智模型/);
 });
 
 test("uses one cache-free canonical loopback entry on a strict fixed port", async () => {

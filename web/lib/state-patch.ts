@@ -3,7 +3,9 @@ import type { WeekUpState } from "./week-up-domain.ts";
 const COLLECTION_KEYS = [
   "attributeCategories", "projectCategories", "attributes", "projects",
   "learningMoreCourses", "learningMoreLessons", "goals", "plans",
-  "completionFacts", "xpTransactions", "weightRevisions", "dailySettlements", "settlements", "skillbooks",
+  "completionFacts", "xpTransactions", "weightRevisions",
+  "awarenessEntries", "dailyAwarenessSnapshots", "weeklyEmotionReviews", "monthlyThoughtReviews", "mentalModelVersions",
+  "dailySettlements", "settlements", "skillbooks",
 ] as const;
 
 type CollectionKey = typeof COLLECTION_KEYS[number];

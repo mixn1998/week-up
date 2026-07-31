@@ -55,7 +55,7 @@ test("applies the completed-only weekly review migration after replaying old har
   database.close();
 
   store = await createWeekUpDatabase(files.path);
-  assert.equal(store.load().schemaVersion, 22);
+  assert.equal(store.load().schemaVersion, 23);
   assert.equal(store.load().settlements[0].harvest.status, "stale");
   assert.equal(store.load().settlements[0].harvest.text, "旧周报");
   store.close();

@@ -32,8 +32,11 @@ export function dueSettlementCommands(state: WeekUpState, now: string): WeekUpCo
   const today = shanghaiDate(now);
   const existing = new Set(state.settlements.map((item) => key(item.period, item.startDate, item.endDate)));
   const due = new Map<string, WeekUpCommand>();
-  for (const plan of state.plans) {
-    const date = shanghaiDate(plan.startAt);
+  const sourceDates = [
+    ...state.plans.map((plan) => shanghaiDate(plan.startAt)),
+    ...state.awarenessEntries.filter((entry) => entry.removedAt === undefined).map((entry) => entry.localDate),
+  ];
+  for (const date of new Set(sourceDates)) {
     const week = weekBounds(date);
     if (week.endDate < today) {
       const periodKey = key("week", week.startDate, week.endDate);
@@ -52,9 +55,14 @@ export function dueDailySettlementCommands(state: WeekUpState, now: string): Wee
   const today = shanghaiDate(now);
   const existing = new Set(state.dailySettlements.map((item) => item.localDate));
   return [...new Set(
-    state.plans
-      .filter((plan) => plan.removedAt === undefined)
-      .map((plan) => shanghaiDate(plan.startAt))
+    [
+      ...state.plans
+        .filter((plan) => plan.removedAt === undefined)
+        .map((plan) => shanghaiDate(plan.startAt)),
+      ...state.awarenessEntries
+        .filter((entry) => entry.removedAt === undefined)
+        .map((entry) => entry.localDate),
+    ]
       .filter((date) => date < today && !existing.has(date)),
   )]
     .sort()
