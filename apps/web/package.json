@@ -1,0 +1,32 @@
+{
+  "name": "week-up-web-demo",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "scripts": {
+    "start": "npm run build && node server/server.mjs",
+    "start:server": "node server/server.mjs",
+    "dev": "node node_modules/vite/bin/vite.js --config vite.demo.config.ts",
+    "build": "node node_modules/vite/bin/vite.js build --config vite.demo.config.ts",
+    "runtime:publish": "node scripts/runtime-release.mjs publish",
+    "package:local": "npm run build && node scripts/package-local-release.mjs",
+    "deploy:local": "npm run build && powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install-week-up-autostart.ps1",
+    "preview": "node server/server.mjs",
+    "test": "node --test tests/*.test.mjs",
+    "typecheck": "node node_modules/typescript/bin/tsc --noEmit"
+  },
+  "dependencies": {
+    "react": "19.2.7",
+    "react-dom": "19.2.7"
+  },
+  "devDependencies": {
+    "@types/node": "24.1.0",
+    "@types/react": "19.2.17",
+    "@types/react-dom": "19.2.3",
+    "typescript": "5.9.3",
+    "vite": "8.1.3"
+  }
+}

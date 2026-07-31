@@ -1,4 +1,10 @@
 .superpowers/
+artifacts/
+
+# Node dependencies and local tool caches
+node_modules/
+.npm/
+.npm-cache/
 
 # Privacy and local runtime data
 .env

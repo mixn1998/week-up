@@ -1,0 +1,66 @@
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import test from "node:test";
+
+const source = readFileSync(
+  new URL("../scripts/run-week-up-service.ps1", import.meta.url),
+  "utf8",
+);
+const installerSource = readFileSync(
+  new URL("../scripts/install-week-up-autostart.ps1", import.meta.url),
+  "utf8",
+);
+const stableRunnerSource = readFileSync(
+  new URL("../scripts/run-current-week-up.ps1", import.meta.url),
+  "utf8",
+);
+
+test("keeps recoverable Node stderr from terminating the persistent service runner", () => {
+  assert.match(
+    source,
+    /\$ErrorActionPreference = "Continue"\s+& \$nodeExe \$serverPath \*>> \$logPath/,
+  );
+  assert.match(
+    source,
+    /\$nodeExitCode = \$LASTEXITCODE\s+\$ErrorActionPreference = "Stop"/,
+  );
+});
+
+test("installs one hardened logon task without a periodic trigger", () => {
+  assert.match(installerSource, /New-ScheduledTaskTrigger -AtLogOn/);
+  assert.doesNotMatch(installerSource, /RepetitionInterval|-Once/);
+  assert.match(installerSource, /-RunLevel Limited/);
+  assert.match(installerSource, /-DontStopOnIdleEnd/);
+  assert.match(installerSource, /-DisallowHardTerminate/);
+  assert.match(installerSource, /-RestartCount 999/);
+  assert.match(installerSource, /-MultipleInstances IgnoreNew/);
+  assert.match(installerSource, /existing task can continue through the compatibility runner/);
+});
+
+test("releases only a verified Week UP listener before starting its replacement", () => {
+  assert.match(installerSource, /http:\/\/127\.0\.0\.1:4173\/api\/runtime/);
+  assert.match(installerSource, /\.runtime\.appId -eq "week-up"/);
+  assert.match(installerSource, /Get-NetTCPConnection[\s\S]+?-LocalPort 4173/);
+  assert.match(installerSource, /Stop-Process -Id \$listener\.OwningProcess -Force/);
+  assert.match(installerSource, /Timed out waiting for the previous Week UP listener to release port 4173/);
+  assert.ok(
+    installerSource.indexOf("Stop-ExistingWeekUpService") < installerSource.indexOf("Start-ScheduledTask"),
+  );
+});
+
+test("publishes a lightweight release and starts it through one stable version pointer", () => {
+  assert.match(installerSource, /runtime-release\.mjs/);
+  assert.match(installerSource, /--install-root \$InstallRoot --data-root \$DataRoot/);
+  assert.match(installerSource, /run-current-week-up\.ps1/);
+  assert.match(stableRunnerSource, /current\.json/);
+  assert.match(stableRunnerSource, /versions/);
+  assert.match(stableRunnerSource, /-ProjectRoot \$releaseRoot/);
+  assert.match(stableRunnerSource, /install and user data roots must not overlap/);
+});
+
+test("keeps an old scheduled task on the lightweight current release", () => {
+  assert.match(source, /current\.json/);
+  assert.match(source, /Programs\\Week UP/);
+  assert.match(source, /\$PSBoundParameters\.ContainsKey\("ProjectRoot"\)/);
+  assert.match(source, /versions/);
+});

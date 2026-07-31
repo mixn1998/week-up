@@ -31,31 +31,31 @@ Week UP 因此不把任务列表当作产品终点，而是围绕“意图如何
 
 ### 1. 先建立方向，再定义行动
 
-![Week UP 月方向页面，展示月方向、周目标、行动进度与项目贡献](./docs/screenshots/goal-hierarchy.png)
+![Week UP 月方向页面，展示月方向、周目标、行动进度与项目贡献](./docs/product/screenshots/goal-hierarchy.png)
 
 月方向提供较长周期的选择，周目标负责收窄当前重点，具体行动才进入完成统计。三层之间保留显式关联，因此既能从方向追到今天，也能从一项完成记录解释它服务于哪个目标。
 
-![Week UP 行动设计，展示日期、时段、目标关联、分类和实际属性奖励](./docs/screenshots/action-design.png)
+![Week UP 行动设计，展示日期、时段、目标关联、分类和实际属性奖励](./docs/product/screenshots/action-design.png)
 
 行动不是只有标题的待办。它可以来自可复用项目模板，也能单独调整本次数量、时间段、目标关系与奖励。模板负责降低重复配置成本，具体行动保留当次执行的真实差异。
 
 ### 2. 把计划放进今天和这一周
 
-![Week UP 今日计划，展示项目行动、Learning MORE 课程、时间与成长奖励](./docs/screenshots/today-planning.png)
+![Week UP 今日计划，展示项目行动、Learning MORE 课程、时间与成长奖励](./docs/product/screenshots/today-planning.png)
 
 今日页只关心此刻可执行的内容：时间、上下文、完成入口和完成后产生的成长。Learning MORE 课程会以同步行动出现，但仍保留来源标识，避免两个产品同时声称自己拥有同一份课程事实。
 
-![Week UP 周时间轨迹，展示项目行动、课程与训练在真实时段中的安排](./docs/screenshots/weekly-calendar.png)
+![Week UP 周时间轨迹，展示项目行动、课程与训练在真实时段中的安排](./docs/product/screenshots/weekly-calendar.png)
 
 列表回答“做什么”，日历回答“什么时候做”。周视图把不同来源的行动投射到同一时间轴，未安排内容则留在待安排区，而不是假装一条记录已经成为可执行计划。
 
 ### 3. 先结算事实，再形成成长反馈
 
-![Week UP 周期复盘，展示完成记录、延期内容、冻结事实、属性增长与 AI 收获](./docs/screenshots/cycle-review.png)
+![Week UP 周期复盘，展示完成记录、延期内容、冻结事实、属性增长与 AI 收获](./docs/product/screenshots/cycle-review.png)
 
 周期结束后先冻结完成、未完成和 XP 等事实，再让 AI 基于这些事实生成收获。延期不会被一段好看的总结抹掉；它会保留历史状态，并明确进入下一轮。
 
-![Week UP 成就图鉴，展示属性徽章、技能书架入口与成长进度](./docs/screenshots/growth-collection.png)
+![Week UP 成就图鉴，展示属性徽章、技能书架入口与成长进度](./docs/product/screenshots/growth-collection.png)
 
 成长反馈不是独立打卡。属性 XP 来自具体完成行动，技能书与里程地图记录更长期的积累。每一次增长都能回到产生它的行动，而不是由系统凭空奖励。
 
@@ -114,11 +114,13 @@ flowchart LR
 
 | Area         | Responsibility                                         |
 | ------------ | ------------------------------------------------------ |
-| `web/app`    | 页面、目标与行动交互、状态控制                         |
-| `web/lib`    | 领域模型、计划选择、结算、投影、同步与 Repository 边界 |
-| `web/server` | 本地 HTTP 服务、SQLite 持久化和 AI 回顾服务            |
-| `web/src`    | React / Vite 应用入口                                  |
-| `web/tests`  | 领域、持久化、同步、调度、回顾和视图投影测试           |
+| `apps/web/src/app` | 页面、目标与行动交互、状态控制                         |
+| `apps/web/src/lib` | 领域模型、计划选择、结算、投影、同步与 Repository 边界 |
+| `apps/web/server`  | 本地 HTTP 服务、SQLite 持久化和 AI 回顾服务            |
+| `apps/web/src`     | React / Vite 应用入口                                  |
+| `apps/web/tests`   | 领域、持久化、同步、调度、回顾和视图投影测试           |
+| `docs/product`     | 产品截图与对外展示资料                                 |
+| `docs/governance`  | 安全、隐私与脱敏说明                                   |
 
 正式运行数据默认保存在 `%LOCALAPPDATA%\Week UP\data\week-up.sqlite`，自动备份位于 `%LOCALAPPDATA%\Week UP\backups`。这些目录不会进入仓库。
 
@@ -143,7 +145,7 @@ Week UP 使用一组与产品风险对应的交付门槛：
 ### Install and verify
 
 ```powershell
-cd web
+cd apps/web
 npm ci
 npm run typecheck
 npm test
@@ -162,6 +164,14 @@ npm run dev
 npm run start
 ```
 
+### Create a lightweight local deployment package
+
+```powershell
+npm run package:local
+```
+
+The ZIP is written to `artifacts/local/` at the repository root. It contains the built application and installer only; dependencies, tests, caches, user data, backups, and secrets are excluded.
+
 ### Start automatically after Windows login
 
 ```powershell
@@ -179,7 +189,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\install-week-up-au
 - AI Provider 配置、环境文件、凭据、密钥和证书；
 - 日志、缓存、依赖、构建结果和测试产物。
 
-截图中的目标、行动、课程、属性与复盘均为虚构演示内容。详见 [SECURITY_AND_PRIVACY.md](./SECURITY_AND_PRIVACY.md) 与 [SANITIZATION_REPORT.md](./SANITIZATION_REPORT.md)。
+截图中的目标、行动、课程、属性与复盘均为虚构演示内容。详见 [安全与隐私说明](./docs/governance/security-and-privacy.md) 与 [脱敏报告](./docs/governance/sanitization-report.md)。
 
 ## Current boundaries
 
