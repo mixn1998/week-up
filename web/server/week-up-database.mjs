@@ -363,6 +363,12 @@ function migrationBackupBase(name) {
   return /^(pre-.+\.sqlite)(?:\.gz)?$/.exec(name)?.[1];
 }
 
+function migrationBackupCreatedAt(base) {
+  const match = /-(\d{4}-\d{2}-\d{2})T(\d{2})-(\d{2})-(\d{2})-(\d{3})Z\.sqlite$/.exec(base);
+  if (!match) return undefined;
+  return Date.parse(`${match[1]}T${match[2]}:${match[3]}:${match[4]}.${match[5]}Z`);
+}
+
 export async function maintainBackups(store, backupDirectory, now = new Date()) {
   if (!store.integrityCheck()) throw new Error("sqlite_integrity_check_failed");
   await mkdir(backupDirectory, { recursive: true });
@@ -382,11 +388,12 @@ export async function maintainBackups(store, backupDirectory, now = new Date()) 
     dailyGroups.set(date, group);
   }
   const dailyDates = [...dailyGroups.keys()].sort().reverse();
-  const keptDailyDates = new Set(dailyDates.slice(0, 14));
-  for (const date of dailyDates.slice(14)) {
-    const mondayCount = [...keptDailyDates].filter((item) => new Date(`${item}T00:00:00Z`).getUTCDay() === 1).length;
-    if (new Date(`${date}T00:00:00Z`).getUTCDay() === 1 && mondayCount < 8) keptDailyDates.add(date);
-  }
+  const recentDailyDates = dailyDates.slice(0, 7);
+  const olderWeeklyDates = dailyDates
+    .slice(7)
+    .filter((date) => new Date(`${date}T00:00:00Z`).getUTCDay() === 1)
+    .slice(0, 4);
+  const keptDailyDates = new Set([...recentDailyDates, ...olderWeeklyDates]);
   for (const [date, names] of dailyGroups) {
     if (!keptDailyDates.has(date)) {
       for (const name of names) await unlink(join(backupDirectory, name));
@@ -409,19 +416,15 @@ export async function maintainBackups(store, backupDirectory, now = new Date()) 
     group.push(name);
     migrationGroups.set(base, group);
   }
-  const migrations = await Promise.all([...migrationGroups].map(async ([base, names]) => ({
-    base,
-    names,
-    modifiedAt: Math.max(...await Promise.all(names.map(async (name) => (await stat(join(backupDirectory, name))).mtimeMs))),
-  })));
-  migrations.sort((left, right) => right.modifiedAt - left.modifiedAt);
+  const migrations = await Promise.all([...migrationGroups].map(async ([base, names]) => {
+    const modifiedAt = Math.max(...await Promise.all(names.map(async (name) => (await stat(join(backupDirectory, name))).mtimeMs)));
+    return { names, sortAt: migrationBackupCreatedAt(base) ?? modifiedAt };
+  }));
+  migrations.sort((left, right) => right.sortAt - left.sortAt);
   for (const [index, migration] of migrations.entries()) {
-    if (index >= 2) {
+    if (index >= 1) {
       for (const name of migration.names) await unlink(join(backupDirectory, name));
-      continue;
     }
-    const sqlitePath = join(backupDirectory, migration.base);
-    if (index === 1 && await fileExists(sqlitePath)) await compressBackup(sqlitePath);
   }
   return target;
 }
