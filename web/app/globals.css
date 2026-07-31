@@ -1963,8 +1963,8 @@ button.drawer-plan__time:hover, button.drawer-plan__time:focus-visible { backgro
 /* Self-awareness: sparse significant-event capture and frozen reviews */
 .awareness-quick { padding: 0; }
 .awareness-quick > .section-heading { margin-bottom: 12px; padding: 0 2px; }
-.awareness-quick__grid { display: grid; grid-template-columns: minmax(0, .95fr) minmax(0, 1.05fr); align-items: stretch; gap: 16px; }
-.awareness-capture { display: flex; min-width: 0; flex-direction: column; gap: 10px; padding: 18px; background: linear-gradient(180deg, rgba(255,255,255,.94), rgba(255,255,255,.76)); }
+.awareness-quick__grid { display: grid; grid-template-columns: minmax(0, 1fr); align-items: stretch; gap: 12px; }
+.awareness-capture { display: flex; min-width: 0; flex-direction: column; gap: 10px; padding: 15px; background: linear-gradient(180deg, rgba(255,255,255,.94), rgba(255,255,255,.76)); }
 .awareness-capture--thought { border-top: 6px solid var(--yellow); }
 .awareness-capture--emotion { border-top: 6px solid var(--pink); }
 .awareness-capture label { display: flex; flex-direction: column; gap: 2px; }
