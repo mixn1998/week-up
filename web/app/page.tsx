@@ -48,9 +48,9 @@ const NAV_ITEMS: Array<{ id: Exclude<TabId, "weight">; icon: string; label: stri
   { id: "today", ...PAGE_META.today, desktopLabel: "立即出发！" },
   { id: "calendar", ...PAGE_META.calendar },
   { id: "week", ...PAGE_META.week },
-  { id: "action-config", icon: "⚙", label: "行动配置", eyebrow: "CONFIG" },
-  { id: "awareness", ...PAGE_META.awareness },
   { id: "month", ...PAGE_META.month },
+  { id: "awareness", ...PAGE_META.awareness },
+  { id: "action-config", icon: "⚙", label: "行动配置", eyebrow: "CONFIG" },
   { id: "growth", ...PAGE_META.growth },
 ];
 

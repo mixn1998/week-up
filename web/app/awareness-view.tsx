@@ -89,20 +89,20 @@ export function AwarenessQuickCapture({
     }
   };
 
-  return <section className="pixel-card awareness-quick">
+  return <section className="awareness-quick">
     <div className="section-heading section-heading--small">
       <div><span className="eyebrow">SELF AWARENESS</span><h2>此刻值得留下</h2></div>
       <button className="text-button" type="button" onClick={onExplore}>查看存档 →</button>
     </div>
     <div className="awareness-quick__grid">
-      <form className="awareness-capture awareness-capture--thought" onSubmit={submitThought}>
+      <form className="pixel-card awareness-capture awareness-capture--thought" onSubmit={submitThought}>
         <label htmlFor="quick-thought"><b>思想变化</b><small>记录一个值得留下的想法</small></label>
         <textarea id="quick-thought" value={thought} onChange={(event) => setThought(event.target.value)} rows={3} placeholder="直接写下此刻形成的想法…" />
         <button className="pixel-button pixel-button--yellow" type="submit" disabled={!thought.trim() || Boolean(saving)}>
           {saving === "thought" ? "保存中…" : "保存思想"}
         </button>
       </form>
-      <form className="awareness-capture awareness-capture--emotion" onSubmit={submitEmotion}>
+      <form className="pixel-card awareness-capture awareness-capture--emotion" onSubmit={submitEmotion}>
         <label><b>情绪流</b><small>记录一次强烈感受</small></label>
         <div className="emotion-picker" role="radiogroup" aria-label="选择显著情绪">
           {EMOTION_LABELS.map((item) => <button
@@ -255,21 +255,21 @@ export function AwarenessView({
       <button className={tab === "mental-model" ? "active" : ""} onClick={() => setTab("mental-model")}><span>03</span><b>心智模型</b><small>{mentalModels.length} 个版本</small></button>
     </div>
 
-    {tab === "thought" && <div className="awareness-columns">
+    {tab === "thought" && <div className={`awareness-columns${monthlyReviews.length === 0 ? " awareness-columns--single" : ""}`}>
       <section className="pixel-card awareness-stream"><div className="section-heading section-heading--small"><div><span className="eyebrow">THOUGHT EVENT STREAM</span><h2>思想存档</h2></div><span>{groupEntries(thoughtEntries).length} 个记录日期</span></div>
         {groupEntries(thoughtEntries).length === 0 ? <div className="mini-empty">还没有留下思想变化。</div> : groupEntries(thoughtEntries).map(([date, dayEntries]) => <section className="awareness-day" key={date}><header><b>{date}</b><span>{dayEntries.length > 1 ? `灵感集中 · ${dayEntries.length} 条` : "1 条显著记录"}</span></header>{dayEntries.map((entry) => <EditableEntry key={entry.id} entry={entry} onUpdate={onUpdate} onRemove={onRemove} />)}</section>)}
       </section>
-      <div className="awareness-review-list">{[...monthlyReviews].reverse().map((review) => <ThoughtReviewCard key={review.id} review={review} generating={generatingIds.includes(review.id)} onRetry={() => {
+      {monthlyReviews.length > 0 && <div className="awareness-review-list">{[...monthlyReviews].reverse().map((review) => <ThoughtReviewCard key={review.id} review={review} generating={generatingIds.includes(review.id)} onRetry={() => {
         const model = mentalModels.find((version) => version.sourceThoughtReviewId === review.id);
         if (model) void onRetryMonthly(model);
-      }} />)}</div>
+      }} />)}</div>}
     </div>}
 
-    {tab === "emotion" && <div className="awareness-columns">
+    {tab === "emotion" && <div className={`awareness-columns${weeklyReviews.length === 0 ? " awareness-columns--single" : ""}`}>
       <section className="pixel-card awareness-stream"><div className="section-heading section-heading--small"><div><span className="eyebrow">SIGNIFICANT EVENTS</span><h2>显著情绪事件</h2></div><span>空白日期不补值</span></div>
         {groupEntries(emotionEntries).length === 0 ? <div className="mini-empty">还没有留下显著情绪事件。</div> : groupEntries(emotionEntries).map(([date, dayEntries]) => <section className="awareness-day awareness-day--emotion" key={date}><header><b>{date}</b><span>{dayEntries.length > 1 ? `同日变化 · ${dayEntries.length} 个离散点` : "1 个事件点"}</span></header><div className="emotion-event-line">{dayEntries.map((entry) => <i key={entry.id} style={{ "--emotion-level": entry.kind === "emotion" ? entry.level : 3 } as CSSProperties} />)}</div>{dayEntries.map((entry) => <EditableEntry key={entry.id} entry={entry} onUpdate={onUpdate} onRemove={onRemove} />)}</section>)}
       </section>
-      <div className="awareness-review-list">{[...weeklyReviews].reverse().map((review) => <EmotionReviewCard key={review.id} review={review} generating={generatingIds.includes(review.id)} onRetry={() => void onRetryWeekly(review.id)} />)}</div>
+      {weeklyReviews.length > 0 && <div className="awareness-review-list">{[...weeklyReviews].reverse().map((review) => <EmotionReviewCard key={review.id} review={review} generating={generatingIds.includes(review.id)} onRetry={() => void onRetryWeekly(review.id)} />)}</div>}
     </div>}
 
     {tab === "mental-model" && <>

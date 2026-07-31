@@ -77,7 +77,7 @@ test("keeps navigation ordered and weight accessible only from Today", async () 
   const page = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
   const navigation = page.match(/const NAV_ITEMS:[\s\S]*?= \[([\s\S]*?)\];/)?.[1] ?? "";
   const ids = [...navigation.matchAll(/id: "([^"]+)"/g)].map((match) => match[1]);
-  assert.deepEqual(ids, ["today", "calendar", "week", "action-config", "awareness", "month", "growth"]);
+  assert.deepEqual(ids, ["today", "calendar", "week", "month", "awareness", "action-config", "growth"]);
   assert.doesNotMatch(navigation, /id: "weight"/);
   assert.match(page, /onOpenWeight=\{\(\) => setTab\("weight"\)\}/);
 });
@@ -96,6 +96,10 @@ test("adds sparse self-awareness capture and three independent archive tabs", as
   assert.match(awareness, /心智模型/);
   assert.match(awareness, /空白日期不补值/);
   assert.match(awareness, /历史思想形成的当前心智模型/);
+  assert.match(awareness, /monthlyReviews\.length === 0 \? " awareness-columns--single"/);
+  assert.match(awareness, /weeklyReviews\.length === 0 \? " awareness-columns--single"/);
+  assert.doesNotMatch(awareness, /className="pixel-card awareness-quick"/);
+  assert.equal((awareness.match(/className="pixel-card awareness-capture/g) ?? []).length, 2);
 });
 
 test("uses one cache-free canonical loopback entry on a strict fixed port", async () => {

@@ -1961,9 +1961,10 @@ button.drawer-plan__time:hover, button.drawer-plan__time:focus-visible { backgro
 }
 
 /* Self-awareness: sparse significant-event capture and frozen reviews */
-.awareness-quick { padding: 18px; }
-.awareness-quick__grid { display: grid; grid-template-columns: 1fr 1.1fr; gap: 12px; }
-.awareness-capture { display: flex; min-width: 0; flex-direction: column; gap: 9px; padding: 12px; border: 2px solid var(--ink); background: rgba(255,255,255,.72); box-shadow: 3px 3px 0 rgba(48,36,71,.16); }
+.awareness-quick { padding: 0; }
+.awareness-quick > .section-heading { margin-bottom: 12px; padding: 0 2px; }
+.awareness-quick__grid { display: grid; grid-template-columns: minmax(0, .95fr) minmax(0, 1.05fr); align-items: stretch; gap: 16px; }
+.awareness-capture { display: flex; min-width: 0; flex-direction: column; gap: 10px; padding: 18px; background: linear-gradient(180deg, rgba(255,255,255,.94), rgba(255,255,255,.76)); }
 .awareness-capture--thought { border-top: 6px solid var(--yellow); }
 .awareness-capture--emotion { border-top: 6px solid var(--pink); }
 .awareness-capture label { display: flex; flex-direction: column; gap: 2px; }
@@ -1978,7 +1979,7 @@ button.drawer-plan__time:hover, button.drawer-plan__time:focus-visible { backgro
 .awareness-capture textarea:focus,
 .awareness-capture input:focus,
 .awareness-entry__editor textarea:focus { border-color: var(--violet); box-shadow: inset 4px 0 0 var(--cyan); }
-.awareness-capture .pixel-button { min-height: 38px; padding: 6px 10px; font-size: 12px; }
+.awareness-capture .pixel-button { min-height: 38px; margin-top: auto; padding: 6px 10px; font-size: 12px; }
 .pixel-button--yellow { background: var(--yellow); }
 .emotion-picker { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 4px; }
 .emotion-picker button { display: grid; min-width: 0; min-height: 46px; place-items: center; gap: 1px; padding: 3px 1px; border: 2px solid rgba(48,36,71,.28); background: #fff; color: var(--muted); cursor: pointer; }
@@ -1987,21 +1988,24 @@ button.drawer-plan__time:hover, button.drawer-plan__time:focus-visible { backgro
 .emotion-picker button.is-selected { border-color: var(--ink); background: var(--cyan); color: var(--ink); box-shadow: 2px 2px 0 var(--ink); transform: translate(-1px,-1px); }
 .emotion-picker--mini { display: flex; flex-wrap: wrap; }
 .emotion-picker--mini button { min-height: 32px; padding: 4px 8px; font-size: 11px; }
-.awareness-quick__foot { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 11px; color: var(--muted); font-size: 11px; }
+.awareness-quick__foot { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 12px; padding: 0 2px; color: var(--muted); font-size: 11px; }
 .awareness-quick__foot b { color: var(--violet); font-size: 15px; }
 .awareness-error { margin-top: 9px; padding: 7px 9px; border-left: 4px solid var(--pink); background: rgba(255,77,158,.09); color: #a71f63; font-size: 11px; font-weight: 800; }
 
-.awareness-view .page-title { margin-bottom: 12px; }
-.awareness-tabs { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 18px; }
-.awareness-tabs button { display: grid; grid-template-columns: 42px 1fr auto; align-items: center; gap: 10px; min-height: 68px; padding: 10px 13px; border: var(--border); background: var(--paper); color: var(--ink); text-align: left; box-shadow: 3px 3px 0 rgba(48,36,71,.15); cursor: pointer; }
+.awareness-view .page-title { margin-bottom: 14px; }
+.awareness-view .page-title p { max-width: 760px; }
+.awareness-tabs { display: flex; max-width: 1260px; gap: 12px; margin-bottom: 22px; }
+.awareness-tabs button { display: grid; flex: 1 1 0; grid-template-columns: 42px minmax(110px,1fr) auto; align-items: center; gap: 11px; min-width: 0; min-height: 66px; padding: 10px 14px; border: var(--border); background: rgba(255,255,255,.8); color: var(--ink); text-align: left; box-shadow: 3px 3px 0 rgba(48,36,71,.15); cursor: pointer; }
 .awareness-tabs button > span { display: grid; width: 38px; height: 38px; place-items: center; background: var(--violet); color: white; font: 900 12px/1 Consolas, monospace; }
 .awareness-tabs button b { font-size: 16px; }
 .awareness-tabs button small { color: var(--muted); font-size: 10px; }
-.awareness-tabs button.active { background: var(--yellow); box-shadow: 4px 4px 0 var(--ink); transform: translate(-1px,-1px); }
+.awareness-tabs button.active { background: linear-gradient(90deg, rgba(255,223,87,.95), rgba(255,245,196,.72)); box-shadow: 4px 4px 0 var(--ink); transform: translate(-1px,-1px); }
 .awareness-tabs button.active > span { background: var(--pink); }
 .awareness-columns { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(340px, .85fr); align-items: start; gap: 18px; }
+.awareness-columns--single { grid-template-columns: minmax(0, 1fr); }
 .awareness-stream,
 .awareness-review-card { padding: 18px; }
+.awareness-columns--single .awareness-stream { width: 100%; }
 .awareness-day { padding: 14px 0; border-top: 2px dashed rgba(48,36,71,.18); }
 .awareness-day:first-of-type { border-top: 0; }
 .awareness-day > header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 9px; }
@@ -2082,7 +2086,7 @@ button.drawer-plan__time:hover, button.drawer-plan__time:focus-visible { backgro
 }
 
 @media (max-width: 820px) {
-  .awareness-tabs { grid-template-columns: 1fr; }
+  .awareness-tabs { display: grid; max-width: none; grid-template-columns: 1fr; }
   .awareness-tabs button { grid-template-columns: 38px 1fr auto; min-height: 58px; }
   .mental-model-grid { grid-template-columns: 1fr; }
   .mental-model-banner { align-items: flex-start; flex-direction: column; }
@@ -2090,9 +2094,9 @@ button.drawer-plan__time:hover, button.drawer-plan__time:focus-visible { backgro
 }
 
 @media (max-width: 480px) {
-  .awareness-quick,
   .awareness-stream,
   .awareness-review-card { padding: 12px; }
+  .awareness-capture { padding: 14px; }
   .emotion-picker { grid-template-columns: repeat(5, minmax(42px,1fr)); overflow-x: auto; }
   .awareness-entry { padding-left: 62px; }
   .awareness-entry__meta { width: 45px; }
