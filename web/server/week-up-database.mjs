@@ -1,7 +1,10 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, readdir, unlink } from "node:fs/promises";
+import { createReadStream, createWriteStream } from "node:fs";
+import { access, mkdir, readdir, rename, stat, unlink } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { backup, DatabaseSync } from "node:sqlite";
+import { pipeline } from "node:stream/promises";
+import { createGzip } from "node:zlib";
 
 import { createEmptyWeekUpState, dispatchWeekUp, migrateWeekUpState, upgradeWeeklyReviewSettlements, WEEK_UP_SCHEMA_VERSION } from "../lib/week-up-domain.ts";
 import { createLearningMoreDelta } from "../lib/learning-more-delta.ts";
@@ -318,10 +321,46 @@ export async function createWeekUpDatabase(databasePath) {
     replace,
     integrityCheck,
     async backupTo(path) { await mkdir(dirname(path), { recursive: true }); await backup(database, path); },
+    checkpoint() { database.exec("PRAGMA wal_checkpoint(TRUNCATE)"); },
     close() { database.close(); },
     path: databasePath,
     migrationBackupPath,
   };
+}
+
+async function fileExists(path) {
+  try {
+    await access(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function compressBackup(path) {
+  const target = `${path}.gz`;
+  if (await fileExists(target)) {
+    await unlink(path);
+    return target;
+  }
+  const temporary = `${target}.tmp-${randomUUID()}`;
+  try {
+    await pipeline(createReadStream(path), createGzip({ level: 9 }), createWriteStream(temporary, { flags: "wx" }));
+    await rename(temporary, target);
+    await unlink(path);
+    return target;
+  } catch (error) {
+    if (await fileExists(temporary)) await unlink(temporary);
+    throw error;
+  }
+}
+
+function dailyBackupDate(name) {
+  return /^week-up-(\d{4}-\d{2}-\d{2})\.sqlite(?:\.gz)?$/.exec(name)?.[1];
+}
+
+function migrationBackupBase(name) {
+  return /^(pre-.+\.sqlite)(?:\.gz)?$/.exec(name)?.[1];
 }
 
 export async function maintainBackups(store, backupDirectory, now = new Date()) {
@@ -330,16 +369,59 @@ export async function maintainBackups(store, backupDirectory, now = new Date()) 
   const stamp = now.toISOString().slice(0, 10);
   const target = join(backupDirectory, `week-up-${stamp}.sqlite`);
   await store.backupTo(target);
+  store.checkpoint();
   const entries = (await readdir(backupDirectory, { withFileTypes: true }))
-    .filter((entry) => entry.isFile() && /^week-up-\d{4}-\d{2}-\d{2}\.sqlite$/.test(entry.name))
-    .map((entry) => entry.name)
-    .sort()
-    .reverse();
-  const keep = new Set(entries.slice(0, 14));
-  for (const name of entries.slice(14)) {
-    const date = new Date(`${name.slice(8, 18)}T00:00:00Z`);
-    if (date.getUTCDay() === 1 && [...keep].filter((item) => new Date(`${item.slice(8, 18)}T00:00:00Z`).getUTCDay() === 1).length < 8) keep.add(name);
+    .filter((entry) => entry.isFile())
+    .map((entry) => entry.name);
+  const dailyGroups = new Map();
+  for (const name of entries) {
+    const date = dailyBackupDate(name);
+    if (!date) continue;
+    const group = dailyGroups.get(date) ?? [];
+    group.push(name);
+    dailyGroups.set(date, group);
   }
-  for (const name of entries) if (!keep.has(name)) await unlink(join(backupDirectory, name));
+  const dailyDates = [...dailyGroups.keys()].sort().reverse();
+  const keptDailyDates = new Set(dailyDates.slice(0, 14));
+  for (const date of dailyDates.slice(14)) {
+    const mondayCount = [...keptDailyDates].filter((item) => new Date(`${item}T00:00:00Z`).getUTCDay() === 1).length;
+    if (new Date(`${date}T00:00:00Z`).getUTCDay() === 1 && mondayCount < 8) keptDailyDates.add(date);
+  }
+  for (const [date, names] of dailyGroups) {
+    if (!keptDailyDates.has(date)) {
+      for (const name of names) await unlink(join(backupDirectory, name));
+      continue;
+    }
+    const sqliteName = `week-up-${date}.sqlite`;
+    const gzipName = `${sqliteName}.gz`;
+    if (date === stamp) {
+      if (await fileExists(join(backupDirectory, gzipName))) await unlink(join(backupDirectory, gzipName));
+    } else if (await fileExists(join(backupDirectory, sqliteName))) {
+      await compressBackup(join(backupDirectory, sqliteName));
+    }
+  }
+
+  const migrationGroups = new Map();
+  for (const name of entries) {
+    const base = migrationBackupBase(name);
+    if (!base) continue;
+    const group = migrationGroups.get(base) ?? [];
+    group.push(name);
+    migrationGroups.set(base, group);
+  }
+  const migrations = await Promise.all([...migrationGroups].map(async ([base, names]) => ({
+    base,
+    names,
+    modifiedAt: Math.max(...await Promise.all(names.map(async (name) => (await stat(join(backupDirectory, name))).mtimeMs))),
+  })));
+  migrations.sort((left, right) => right.modifiedAt - left.modifiedAt);
+  for (const [index, migration] of migrations.entries()) {
+    if (index >= 2) {
+      for (const name of migration.names) await unlink(join(backupDirectory, name));
+      continue;
+    }
+    const sqlitePath = join(backupDirectory, migration.base);
+    if (index === 1 && await fileExists(sqlitePath)) await compressBackup(sqlitePath);
+  }
   return target;
 }

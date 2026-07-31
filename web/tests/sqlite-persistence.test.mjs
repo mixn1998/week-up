@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { access, mkdtemp, rm, stat, utimes } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { DatabaseSync } from "node:sqlite";
@@ -111,5 +111,37 @@ test("creates a verified daily backup", async (t) => {
   assert.equal(backupStore.integrityCheck(), true);
   assert.equal(backupStore.load().preferences.targetWeightKg, 55);
   backupStore.close();
+  store.close();
+});
+
+test("compresses historical backups and limits migration residues without touching user data", async (t) => {
+  const files = await fixture(t);
+  const store = await createWeekUpDatabase(files.path);
+  const backupDirectory = join(files.directory, "backups");
+  const protectedData = join(files.directory, "user-data.sqlite");
+  await store.backupTo(protectedData);
+
+  await maintainBackups(store, backupDirectory, new Date("2026-07-20T00:00:00.000Z"));
+  await maintainBackups(store, backupDirectory, new Date("2026-07-21T00:00:00.000Z"));
+  await Promise.all([
+    store.backupTo(join(backupDirectory, "pre-schema-20-old.sqlite")),
+    store.backupTo(join(backupDirectory, "pre-schema-21-middle.sqlite")),
+    store.backupTo(join(backupDirectory, "pre-schema-22-new.sqlite")),
+  ]);
+  await Promise.all([
+    utimes(join(backupDirectory, "pre-schema-20-old.sqlite"), new Date("2026-07-18"), new Date("2026-07-18")),
+    utimes(join(backupDirectory, "pre-schema-21-middle.sqlite"), new Date("2026-07-19"), new Date("2026-07-19")),
+    utimes(join(backupDirectory, "pre-schema-22-new.sqlite"), new Date("2026-07-20"), new Date("2026-07-20")),
+  ]);
+
+  await maintainBackups(store, backupDirectory, new Date("2026-07-22T00:00:00.000Z"));
+
+  assert.equal((await stat(join(backupDirectory, "week-up-2026-07-22.sqlite"))).isFile(), true);
+  assert.equal((await stat(join(backupDirectory, "week-up-2026-07-21.sqlite.gz"))).isFile(), true);
+  await assert.rejects(access(join(backupDirectory, "week-up-2026-07-21.sqlite")));
+  await assert.rejects(access(join(backupDirectory, "pre-schema-20-old.sqlite")));
+  assert.equal((await stat(join(backupDirectory, "pre-schema-21-middle.sqlite.gz"))).isFile(), true);
+  assert.equal((await stat(join(backupDirectory, "pre-schema-22-new.sqlite"))).isFile(), true);
+  assert.equal((await stat(protectedData)).isFile(), true);
   store.close();
 });

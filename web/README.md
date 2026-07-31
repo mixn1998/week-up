@@ -1,5 +1,18 @@
 # Week UP Web
 
+## Lightweight production runtime
+
+开发工程、生产运行包和用户数据相互独立：
+
+- 开发工程保留源码、测试和 `node_modules`。
+- `npm run deploy:local` 构建并发布轻量运行包到 `%LOCALAPPDATA%\Programs\Week UP`。
+- 运行包只保留当前版和上一版；其余版本及残留临时构建目录会自动清理。
+- 正式数据库、压缩历史备份和日志独立保存在 `%LOCALAPPDATA%\Week UP`，不会进入版本清理范围。
+
+```powershell
+npm run deploy:local
+```
+
 本地优先的 Week UP Web 正式试用版，包含日程、目标、回顾、属性徽章、技能书收藏、体重趋势与 Learning MORE 联动。
 
 ## 本地运行
