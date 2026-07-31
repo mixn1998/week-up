@@ -4,12 +4,19 @@ import { canRescheduleInsideWeekUp, participatesInOverdueQueue } from "./overdue
 import {
   awarenessEntriesInRange,
   buildDailyAwarenessSnapshot,
+  completeMentalModelDimensionProfile,
+  emotionIntensityFromLegacyLevel,
+  emotionTypeFromLegacyLevel,
+  legacyLevelForEmotionType,
   monthlyMentalModelShell,
   monthlyThoughtReviewShell,
   weeklyEmotionReviewShell,
   type AwarenessEntry,
   type DailyAwarenessSnapshot,
+  type EmotionIntensity,
   type EmotionLevel,
+  type EmotionType,
+  type MentalModelDimensionProfile,
   type MentalModelItem,
   type MentalModelVersion,
   type MonthlyThoughtAnalysis,
@@ -380,14 +387,14 @@ export type WeekUpCommand =
   | { type: "weight.record"; localDate: string; valueKg: number }
   | { type: "weight.target"; valueKg?: number }
   | { type: "awareness.thought.record"; content: string; occurredAt?: string }
-  | { type: "awareness.emotion.record"; level: EmotionLevel; reason?: string; occurredAt?: string }
-  | { type: "awareness.entry.update"; id: string; content?: string; level?: EmotionLevel; reason?: string }
+  | { type: "awareness.emotion.record"; level?: EmotionLevel; emotionType?: EmotionType; intensity?: EmotionIntensity; reason?: string; occurredAt?: string }
+  | { type: "awareness.entry.update"; id: string; content?: string; level?: EmotionLevel; emotionType?: EmotionType; intensity?: EmotionIntensity; reason?: string }
   | { type: "awareness.entry.remove"; id: string }
-  | { type: "awareness.historical-baseline.record"; source: NonNullable<MentalModelVersion["historicalSource"]>; models: readonly MentalModelItem[]; provider: AiProviderId; preferredProvider: AiProviderId; fallbackUsed: boolean; model?: string; reasoningEffort?: string }
+  | { type: "awareness.historical-baseline.record"; source: NonNullable<MentalModelVersion["historicalSource"]>; models: readonly MentalModelItem[]; dimensionProfile?: readonly MentalModelDimensionProfile[]; provider: AiProviderId; preferredProvider: AiProviderId; fallbackUsed: boolean; model?: string; reasoningEffort?: string }
   | { type: "awareness.weekly-analysis.succeeded"; id: string; value: WeeklyEmotionAnalysis; provider: AiProviderId; preferredProvider: AiProviderId; fallbackUsed: boolean; model?: string; reasoningEffort?: string }
   | { type: "awareness.weekly-analysis.failed"; id: string; message: string }
   | { type: "awareness.weekly-analysis.retry"; id: string }
-  | { type: "awareness.monthly-analysis.succeeded"; thoughtReviewId?: string; mentalModelVersionId: string; thought?: MonthlyThoughtAnalysis; models: readonly MentalModelItem[]; provider: AiProviderId; preferredProvider: AiProviderId; fallbackUsed: boolean; model?: string; reasoningEffort?: string }
+  | { type: "awareness.monthly-analysis.succeeded"; thoughtReviewId?: string; mentalModelVersionId: string; thought?: MonthlyThoughtAnalysis; models: readonly MentalModelItem[]; dimensionProfile?: readonly MentalModelDimensionProfile[]; provider: AiProviderId; preferredProvider: AiProviderId; fallbackUsed: boolean; model?: string; reasoningEffort?: string }
   | { type: "awareness.monthly-analysis.failed"; thoughtReviewId?: string; mentalModelVersionId: string; message: string }
   | { type: "awareness.monthly-analysis.retry"; thoughtReviewId?: string; mentalModelVersionId: string }
   | { type: "daily-settlement.generate"; localDate: string }
@@ -646,6 +653,15 @@ function assertLocalDate(value: string, field = "local_date"): void {
 
 function validEmotionLevel(value: number): value is EmotionLevel {
   return Number.isInteger(value) && value >= 1 && value <= 5;
+}
+
+function validEmotionType(value: unknown): value is EmotionType {
+  return value === "low" || value === "anxious" || value === "angry"
+    || value === "joyful" || value === "excited" || value === "complex";
+}
+
+function validEmotionIntensity(value: unknown): value is EmotionIntensity {
+  return value === 1 || value === 2 || value === 3;
 }
 
 function awarenessEvidenceIds(state: WeekUpState, model: MentalModelVersion): Set<string> {
@@ -1733,7 +1749,13 @@ export function dispatchWeekUp(state: WeekUpState, command: WeekUpCommand, conte
       return changed(state, { awarenessEntries: [...state.awarenessEntries, entry] }, id);
     }
     case "awareness.emotion.record": {
-      if (!validEmotionLevel(command.level)) throw new Error("emotion_level_invalid");
+      const emotionType = command.emotionType
+        ?? (command.level !== undefined && validEmotionLevel(command.level) ? emotionTypeFromLegacyLevel(command.level) : undefined);
+      if (!validEmotionType(emotionType)) throw new Error("emotion_type_invalid");
+      const level = command.level ?? legacyLevelForEmotionType(emotionType);
+      if (!validEmotionLevel(level)) throw new Error("emotion_level_invalid");
+      const intensity = command.intensity ?? emotionIntensityFromLegacyLevel(level);
+      if (!validEmotionIntensity(intensity)) throw new Error("emotion_intensity_invalid");
       const occurredAt = command.occurredAt ?? now;
       const entryDate = localDate(occurredAt);
       if (state.dailySettlements.some((settlement) => settlement.localDate === entryDate)) throw new Error("awareness_date_locked");
@@ -1744,7 +1766,9 @@ export function dispatchWeekUp(state: WeekUpState, command: WeekUpCommand, conte
         kind: "emotion",
         localDate: entryDate,
         occurredAt,
-        level: command.level,
+        level,
+        emotionType,
+        intensity,
         ...(reason ? { reason } : {}),
         createdAt: now,
         updatedAt: now,
@@ -1770,8 +1794,18 @@ export function dispatchWeekUp(state: WeekUpState, command: WeekUpCommand, conte
           }
         : {
             ...entry,
+            emotionType: (() => {
+              const emotionType = command.emotionType ?? entry.emotionType ?? emotionTypeFromLegacyLevel(entry.level);
+              if (!validEmotionType(emotionType)) throw new Error("emotion_type_invalid");
+              return emotionType;
+            })(),
+            intensity: (() => {
+              const intensity = command.intensity ?? entry.intensity ?? emotionIntensityFromLegacyLevel(entry.level);
+              if (!validEmotionIntensity(intensity)) throw new Error("emotion_intensity_invalid");
+              return intensity;
+            })(),
             level: (() => {
-              const level = command.level ?? entry.level;
+              const level = command.level ?? (command.emotionType ? legacyLevelForEmotionType(command.emotionType) : entry.level);
               if (!validEmotionLevel(level)) throw new Error("emotion_level_invalid");
               return level;
             })(),
@@ -1821,6 +1855,7 @@ export function dispatchWeekUp(state: WeekUpState, command: WeekUpCommand, conte
         analysis: {
           status: "ready",
           models: command.models,
+          dimensionProfile: completeMentalModelDimensionProfile(command.models, command.dimensionProfile),
           generatedAt: now,
           provider: command.provider,
           preferredProvider: command.preferredProvider,
@@ -1875,6 +1910,17 @@ export function dispatchWeekUp(state: WeekUpState, command: WeekUpCommand, conte
       const version = state.mentalModelVersions.find((item) => item.id === command.mentalModelVersionId);
       if (!version) throw new Error("mental_model_version_not_found");
       assertMentalModelEvidence(state, version, command.models);
+      const previousVersion = version.previousVersionId
+        ? state.mentalModelVersions.find((item) => item.id === version.previousVersionId)
+        : undefined;
+      const previousProfile = previousVersion?.analysis.status === "ready"
+        ? completeMentalModelDimensionProfile(previousVersion.analysis.models, previousVersion.analysis.dimensionProfile)
+        : [];
+      const suppliedDimensions = new Set((command.dimensionProfile ?? []).map((item) => item.dimension));
+      const mergedDimensionProfile = completeMentalModelDimensionProfile(command.models, [
+        ...previousProfile.filter((item) => !suppliedDimensions.has(item.dimension)),
+        ...(command.dimensionProfile ?? []),
+      ]);
       const thoughtReview = command.thoughtReviewId
         ? state.monthlyThoughtReviews.find((item) => item.id === command.thoughtReviewId)
         : undefined;
@@ -1901,7 +1947,15 @@ export function dispatchWeekUp(state: WeekUpState, command: WeekUpCommand, conte
         monthlyThoughtReviews: thoughtReview && command.thought
           ? state.monthlyThoughtReviews.map((item) => item.id === thoughtReview.id ? { ...item, analysis: { status: "ready" as const, value: command.thought!, ...meta } } : item)
           : state.monthlyThoughtReviews,
-        mentalModelVersions: state.mentalModelVersions.map((item) => item.id === version.id ? { ...item, analysis: { status: "ready" as const, models: command.models, ...meta } } : item),
+        mentalModelVersions: state.mentalModelVersions.map((item) => item.id === version.id ? {
+          ...item,
+          analysis: {
+            status: "ready" as const,
+            models: command.models,
+            dimensionProfile: mergedDimensionProfile,
+            ...meta,
+          },
+        } : item),
       }, version.id);
     }
     case "awareness.monthly-analysis.failed": {
@@ -2534,7 +2588,18 @@ export function migrateWeekUpState(value: unknown): WeekUpState {
     dailyAwarenessSnapshots: raw.dailyAwarenessSnapshots ?? [],
     weeklyEmotionReviews: raw.weeklyEmotionReviews ?? [],
     monthlyThoughtReviews: raw.monthlyThoughtReviews ?? [],
-    mentalModelVersions: raw.mentalModelVersions ?? [],
+    mentalModelVersions: (raw.mentalModelVersions ?? []).map((version) => version.analysis.status === "ready"
+      ? {
+          ...version,
+          analysis: {
+            ...version.analysis,
+            dimensionProfile: completeMentalModelDimensionProfile(
+              version.analysis.models,
+              version.analysis.dimensionProfile,
+            ),
+          },
+        }
+      : version),
     dailySettlements,
     settlements,
     preferences: raw.preferences ?? {},

@@ -2,21 +2,21 @@
 
 import { FormEvent, useMemo, useState, type CSSProperties } from "react";
 
-import type {
+import {
+  EMOTION_INTENSITIES,
+  EMOTION_TYPES,
+  emotionIntensityFromLegacyLevel,
+  emotionTypeFromLegacyLevel,
+  legacyLevelForEmotionType,
+  type EmotionIntensity,
+  type EmotionType,
   AwarenessEntry,
-  EmotionLevel,
+  type EmotionLevel,
   MentalModelVersion,
   MonthlyThoughtReview,
   WeeklyEmotionReview,
 } from "../lib/awareness.ts";
-
-const EMOTION_LABELS: ReadonlyArray<{ level: EmotionLevel; label: string; mark: string }> = [
-  { level: 1, label: "低落", mark: "▁" },
-  { level: 2, label: "偏低", mark: "▂" },
-  { level: 3, label: "平稳", mark: "▃" },
-  { level: 4, label: "愉悦", mark: "▅" },
-  { level: 5, label: "高涨", mark: "▇" },
-];
+import { MentalModelDimensionList, MentalModelRadar } from "./mental-model-radar.tsx";
 
 function shanghaiToday() {
   const parts = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Shanghai", year: "numeric", month: "2-digit", day: "2-digit" })
@@ -47,13 +47,14 @@ export function AwarenessQuickCapture({
 }: {
   entries: readonly AwarenessEntry[];
   onRecordThought: (content: string) => Promise<unknown>;
-  onRecordEmotion: (level: EmotionLevel, reason?: string) => Promise<unknown>;
+  onRecordEmotion: (emotionType: EmotionType, intensity: EmotionIntensity, reason?: string) => Promise<unknown>;
   onExplore: () => void;
 }) {
   const today = shanghaiToday();
   const todayEntries = entries.filter((entry) => entry.localDate === today && entry.removedAt === undefined);
   const [thought, setThought] = useState("");
-  const [level, setLevel] = useState<EmotionLevel>();
+  const [emotionType, setEmotionType] = useState<EmotionType>();
+  const [intensity, setIntensity] = useState<EmotionIntensity>();
   const [reason, setReason] = useState("");
   const [saving, setSaving] = useState<"thought" | "emotion">();
   const [error, setError] = useState("");
@@ -75,12 +76,13 @@ export function AwarenessQuickCapture({
 
   const submitEmotion = async (event: FormEvent) => {
     event.preventDefault();
-    if (!level || saving) return;
+    if (!emotionType || !intensity || saving) return;
     setSaving("emotion");
     setError("");
     try {
-      await onRecordEmotion(level, reason.trim() || undefined);
-      setLevel(undefined);
+      await onRecordEmotion(emotionType, intensity, reason.trim() || undefined);
+      setEmotionType(undefined);
+      setIntensity(undefined);
       setReason("");
     } catch {
       setError("情绪记录暂时没有保存，请稍后再试。");
@@ -104,18 +106,28 @@ export function AwarenessQuickCapture({
       </form>
       <form className="pixel-card awareness-capture awareness-capture--emotion" onSubmit={submitEmotion}>
         <label><b>情绪流</b><small>记录一次强烈感受</small></label>
-        <div className="emotion-picker" role="radiogroup" aria-label="选择显著情绪">
-          {EMOTION_LABELS.map((item) => <button
-            className={level === item.level ? "is-selected" : ""}
-            key={item.level}
+        <div className="emotion-picker emotion-picker--types" role="radiogroup" aria-label="选择情绪类型">
+          {EMOTION_TYPES.map((item) => <button
+            className={emotionType === item.key ? "is-selected" : ""}
+            key={item.key}
             type="button"
             role="radio"
-            aria-checked={level === item.level}
-            onClick={() => setLevel(item.level)}
+            aria-checked={emotionType === item.key}
+            onClick={() => setEmotionType(item.key)}
           ><i>{item.mark}</i><span>{item.label}</span></button>)}
         </div>
+        <div className="emotion-intensity" role="radiogroup" aria-label="选择感受强度">
+          <small>感受强度</small>{EMOTION_INTENSITIES.map((item) => <button
+            className={intensity === item.value ? "is-selected" : ""}
+            key={item.value}
+            type="button"
+            role="radio"
+            aria-checked={intensity === item.value}
+            onClick={() => setIntensity(item.value)}
+          >{item.label}</button>)}
+        </div>
         <input aria-label="情绪原因（选填）" value={reason} onChange={(event) => setReason(event.target.value)} placeholder="发生了什么？可选填" />
-        <button className="pixel-button pixel-button--pink" type="submit" disabled={!level || Boolean(saving)}>
+        <button className="pixel-button pixel-button--pink" type="submit" disabled={!emotionType || !intensity || Boolean(saving)}>
           {saving === "emotion" ? "保存中…" : "保存感受"}
         </button>
       </form>
@@ -134,25 +146,35 @@ function EditableEntry({
   onRemove,
 }: {
   entry: AwarenessEntry;
-  onUpdate: (entry: AwarenessEntry, value: string, level?: EmotionLevel) => Promise<unknown>;
+  onUpdate: (entry: AwarenessEntry, value: string, level?: EmotionLevel, emotionType?: EmotionType, intensity?: EmotionIntensity) => Promise<unknown>;
   onRemove: (id: string) => Promise<unknown>;
 }) {
   const [editing, setEditing] = useState(false);
   const [value, setValue] = useState(entry.kind === "thought" ? entry.content : entry.reason ?? "");
-  const [level, setLevel] = useState<EmotionLevel>(entry.kind === "emotion" ? entry.level : 3);
+  const [emotionType, setEmotionType] = useState<EmotionType>(entry.kind === "emotion" ? entry.emotionType ?? emotionTypeFromLegacyLevel(entry.level) : "complex");
+  const [intensity, setIntensity] = useState<EmotionIntensity>(entry.kind === "emotion" ? entry.intensity ?? emotionIntensityFromLegacyLevel(entry.level) : 2);
   const frozen = entry.settlementState === "frozen";
   const save = async () => {
-    await onUpdate(entry, value, entry.kind === "emotion" ? level : undefined);
+    await onUpdate(
+      entry,
+      value,
+      entry.kind === "emotion" ? legacyLevelForEmotionType(emotionType) : undefined,
+      entry.kind === "emotion" ? emotionType : undefined,
+      entry.kind === "emotion" ? intensity : undefined,
+    );
     setEditing(false);
   };
   return <article className={`awareness-entry awareness-entry--${entry.kind}${frozen ? " is-frozen" : ""}`}>
     <div className="awareness-entry__meta">
       <span>{eventTime(entry.occurredAt)}</span>
-      {entry.kind === "emotion" && <b>{EMOTION_LABELS.find((item) => item.level === entry.level)?.label}</b>}
+      {entry.kind === "emotion" && <b>{EMOTION_TYPES.find((item) => item.key === (entry.emotionType ?? emotionTypeFromLegacyLevel(entry.level)))?.label} · {EMOTION_INTENSITIES.find((item) => item.value === (entry.intensity ?? emotionIntensityFromLegacyLevel(entry.level)))?.label}</b>}
       <em>{frozen ? "已冻结" : "未结算"}</em>
     </div>
     {editing ? <div className="awareness-entry__editor">
-      {entry.kind === "emotion" && <div className="emotion-picker emotion-picker--mini">{EMOTION_LABELS.map((item) => <button type="button" className={level === item.level ? "is-selected" : ""} key={item.level} onClick={() => setLevel(item.level)}>{item.label}</button>)}</div>}
+      {entry.kind === "emotion" && <>
+        <div className="emotion-picker emotion-picker--mini">{EMOTION_TYPES.map((item) => <button type="button" className={emotionType === item.key ? "is-selected" : ""} key={item.key} onClick={() => setEmotionType(item.key)}>{item.label}</button>)}</div>
+        <div className="emotion-intensity emotion-intensity--mini">{EMOTION_INTENSITIES.map((item) => <button type="button" className={intensity === item.value ? "is-selected" : ""} key={item.value} onClick={() => setIntensity(item.value)}>{item.label}</button>)}</div>
+      </>}
       <textarea value={value} onChange={(event) => setValue(event.target.value)} rows={3} />
       <div><button className="pixel-button pixel-button--cyan" type="button" onClick={() => void save()}>保存</button><button className="text-button" type="button" onClick={() => setEditing(false)}>取消</button></div>
     </div> : <p>{entry.kind === "thought" ? entry.content : entry.reason || "没有补充原因"}</p>}
@@ -183,7 +205,6 @@ function ThoughtReviewCard({ review, generating, onRetry }: { review: MonthlyTho
 function EmotionReviewCard({ review, generating, onRetry }: { review: WeeklyEmotionReview; generating: boolean; onRetry: () => void }) {
   return <section className="pixel-card awareness-review-card">
     <div className="section-heading section-heading--small"><div><span className="eyebrow">WEEKLY EMOTION</span><h2>{review.rangeStart.slice(5)}—{review.rangeEnd.slice(5)}</h2></div><span>{review.statistics.entryCount} 次显著事件</span></div>
-    <div className="emotion-distribution">{EMOTION_LABELS.map(({ level, label }) => <div key={level}><b>{review.statistics.levelDistribution[String(level) as "1"]}</b><span>{label}</span></div>)}</div>
     <AnalysisStatus status={review.analysis.status} generating={generating} onRetry={onRetry} />
     {review.analysis.status === "ready" && <div className="awareness-analysis-copy">
       <h3>{review.analysis.value.dominantFlow}</h3>
@@ -193,29 +214,31 @@ function EmotionReviewCard({ review, generating, onRetry }: { review: WeeklyEmot
   </section>;
 }
 
-function MentalModelPanel({ version, entries, generating, onRetry }: { version?: MentalModelVersion; entries: readonly AwarenessEntry[]; generating: boolean; onRetry: () => void }) {
-  const entryMap = new Map(entries.map((entry) => [entry.id, entry]));
+function MentalModelPanel({
+  version,
+  updateVersion,
+  generating,
+  onRetry,
+}: {
+  version?: MentalModelVersion;
+  updateVersion?: MentalModelVersion;
+  generating: boolean;
+  onRetry: () => void;
+}) {
   if (!version) return <section className="pixel-card awareness-empty"><b>还没有心智模型版本</b><p>历史材料分析后会直接形成基线；之后在月结算时更新。</p></section>;
+  const ready = version.analysis.status === "ready" ? version.analysis : undefined;
+  const updateState = updateVersion && updateVersion.id !== version.id ? updateVersion.analysis : version.analysis;
+  const updatedAt = ready?.generatedAt ?? version.frozenAt;
   return <section className="mental-model-panel">
     <div className="mental-model-banner pixel-card">
-      <div><span className="eyebrow">{version.scope === "historical-baseline" ? "HISTORICAL BASELINE" : "MENTAL MODEL VERSION"}</span><h2>{version.scope === "historical-baseline" ? "历史思想形成的当前心智模型" : `${version.periodKey} 心智模型`}</h2></div>
-      <span>{version.scope === "historical-baseline"
-        ? `${version.historicalSource?.recordCount ?? 0} 条历史思想 · ${version.historicalSource?.recordedDateCount ?? 0} 个记录日`
-        : "思想＋显著情绪事件"}</span>
+      <div><span className="eyebrow">CURRENT MENTAL MAP</span><h2>当前心智模型</h2><p>在新记录上持续发展</p></div>
+      <span>更新于 {updatedAt.slice(0, 10)}</span>
     </div>
-    <AnalysisStatus status={version.analysis.status} generating={generating} onRetry={onRetry} />
-    {version.analysis.status === "ready" && <div className="mental-model-grid">{version.analysis.models.map((model) => <article className="pixel-card mental-model-card" key={model.stableKey}>
-      <div className="mental-model-card__head"><span className={`model-change model-change--${model.changeType}`}>{model.changeType === "new" ? "新增" : model.changeType === "reinforced" ? "强化" : model.changeType === "revised" ? "修正" : "退出"}</span><em>{model.confidence === "high" ? "高置信" : model.confidence === "medium" ? "中置信" : "低置信"}</em></div>
-      <h3>{model.name}</h3><p>{model.summary}</p>
-      {model.triggers.length > 0 && <dl><dt>触发</dt><dd>{model.triggers.join(" · ")}</dd></dl>}
-      {model.assumptions.length > 0 && <dl><dt>默认判断</dt><dd>{model.assumptions.join(" · ")}</dd></dl>}
-      {model.currentStrategies.length > 0 && <dl><dt>当前策略</dt><dd>{model.currentStrategies.join(" · ")}</dd></dl>}
-      {model.changeSummary && <blockquote>{model.changeSummary}</blockquote>}
-      {version.scope !== "historical-baseline" && <details><summary>查看来源记录（{model.supportingEntryIds.length}）</summary>{model.supportingEntryIds.map((id) => {
-        const entry = entryMap.get(id);
-        return <p key={id}>{entry?.kind === "thought" ? entry.content : entry?.kind === "emotion" ? entry.reason || "显著情绪事件" : "来源记录已归档"}</p>;
-      })}</details>}
-    </article>)}</div>}
+    {updateState.status !== "ready" && <AnalysisStatus status={updateState.status} generating={generating} onRetry={onRetry} />}
+    {ready && <>
+      <MentalModelRadar profile={ready.dimensionProfile} />
+      <MentalModelDimensionList profile={ready.dimensionProfile} models={ready.models} />
+    </>}
   </section>;
 }
 
@@ -235,24 +258,26 @@ export function AwarenessView({
   monthlyReviews: readonly MonthlyThoughtReview[];
   mentalModels: readonly MentalModelVersion[];
   generatingIds: readonly string[];
-  onUpdate: (entry: AwarenessEntry, value: string, level?: EmotionLevel) => Promise<unknown>;
+  onUpdate: (entry: AwarenessEntry, value: string, level?: EmotionLevel, emotionType?: EmotionType, intensity?: EmotionIntensity) => Promise<unknown>;
   onRemove: (id: string) => Promise<unknown>;
   onRetryWeekly: (id: string) => Promise<unknown>;
   onRetryMonthly: (version: MentalModelVersion) => Promise<unknown>;
 }) {
   const [tab, setTab] = useState<"thought" | "emotion" | "mental-model">("thought");
-  const [selectedModelId, setSelectedModelId] = useState<string>();
   const activeEntries = entries.filter((entry) => entry.removedAt === undefined);
   const thoughtEntries = activeEntries.filter((entry) => entry.kind === "thought");
   const emotionEntries = activeEntries.filter((entry) => entry.kind === "emotion");
-  const selectedModel = mentalModels.find((version) => version.id === selectedModelId) ?? mentalModels.at(-1);
-  const modelVersions = useMemo(() => [...mentalModels].reverse(), [mentalModels]);
+  const latestModel = mentalModels.at(-1);
+  const currentModel = useMemo(
+    () => [...mentalModels].reverse().find((version) => version.analysis.status === "ready") ?? latestModel,
+    [mentalModels, latestModel],
+  );
   return <div className="view awareness-view">
     <div className="page-title"><div><span className="eyebrow">SELF AWARENESS</span><h1>自我觉察</h1><p>只保存值得留下的显著感受与想法，不把空白日期解释成日常状态。</p></div></div>
     <div className="awareness-tabs" role="tablist">
       <button className={tab === "thought" ? "active" : ""} onClick={() => setTab("thought")}><span>01</span><b>思想变化</b><small>{thoughtEntries.length} 条记录</small></button>
       <button className={tab === "emotion" ? "active" : ""} onClick={() => setTab("emotion")}><span>02</span><b>情绪流</b><small>{emotionEntries.length} 次事件</small></button>
-      <button className={tab === "mental-model" ? "active" : ""} onClick={() => setTab("mental-model")}><span>03</span><b>心智模型</b><small>{mentalModels.length} 个版本</small></button>
+      <button className={tab === "mental-model" ? "active" : ""} onClick={() => setTab("mental-model")}><span>03</span><b>心智模型</b><small>持续画像</small></button>
     </div>
 
     {tab === "thought" && <div className={`awareness-columns${monthlyReviews.length === 0 ? " awareness-columns--single" : ""}`}>
@@ -267,14 +292,18 @@ export function AwarenessView({
 
     {tab === "emotion" && <div className={`awareness-columns${weeklyReviews.length === 0 ? " awareness-columns--single" : ""}`}>
       <section className="pixel-card awareness-stream"><div className="section-heading section-heading--small"><div><span className="eyebrow">SIGNIFICANT EVENTS</span><h2>显著情绪事件</h2></div><span>空白日期不补值</span></div>
-        {groupEntries(emotionEntries).length === 0 ? <div className="mini-empty">还没有留下显著情绪事件。</div> : groupEntries(emotionEntries).map(([date, dayEntries]) => <section className="awareness-day awareness-day--emotion" key={date}><header><b>{date}</b><span>{dayEntries.length > 1 ? `同日变化 · ${dayEntries.length} 个离散点` : "1 个事件点"}</span></header><div className="emotion-event-line">{dayEntries.map((entry) => <i key={entry.id} style={{ "--emotion-level": entry.kind === "emotion" ? entry.level : 3 } as CSSProperties} />)}</div>{dayEntries.map((entry) => <EditableEntry key={entry.id} entry={entry} onUpdate={onUpdate} onRemove={onRemove} />)}</section>)}
+        {groupEntries(emotionEntries).length === 0 ? <div className="mini-empty">还没有留下显著情绪事件。</div> : groupEntries(emotionEntries).map(([date, dayEntries]) => <section className="awareness-day awareness-day--emotion" key={date}><header><b>{date}</b><span>{dayEntries.length > 1 ? `同日变化 · ${dayEntries.length} 个离散点` : "1 个事件点"}</span></header><div className="emotion-event-line">{dayEntries.map((entry) => <i key={entry.id} style={{ "--emotion-level": entry.kind === "emotion" ? entry.intensity ?? emotionIntensityFromLegacyLevel(entry.level) : 2 } as CSSProperties} />)}</div>{dayEntries.map((entry) => <EditableEntry key={entry.id} entry={entry} onUpdate={onUpdate} onRemove={onRemove} />)}</section>)}
       </section>
       {weeklyReviews.length > 0 && <div className="awareness-review-list">{[...weeklyReviews].reverse().map((review) => <EmotionReviewCard key={review.id} review={review} generating={generatingIds.includes(review.id)} onRetry={() => void onRetryWeekly(review.id)} />)}</div>}
     </div>}
 
     {tab === "mental-model" && <>
-      {modelVersions.length > 1 && <div className="awareness-version-strip">{modelVersions.map((version) => <button className={version.id === selectedModel?.id ? "active" : ""} key={version.id} onClick={() => setSelectedModelId(version.id)}>{version.scope === "historical-baseline" ? `历史基线 R${version.revisionNumber}` : version.periodKey}</button>)}</div>}
-      <MentalModelPanel version={selectedModel} entries={activeEntries} generating={selectedModel ? generatingIds.includes(selectedModel.id) : false} onRetry={() => selectedModel && void onRetryMonthly(selectedModel)} />
+      <MentalModelPanel
+        version={currentModel}
+        updateVersion={latestModel}
+        generating={latestModel ? generatingIds.includes(latestModel.id) : false}
+        onRetry={() => latestModel && void onRetryMonthly(latestModel)}
+      />
     </>}
   </div>;
 }

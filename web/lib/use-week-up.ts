@@ -416,6 +416,7 @@ export function useWeekUp() {
             mentalModelVersionId: response.result.mentalModelVersionId,
             ...(response.result.thought ? { thought: response.result.thought } : {}),
             models: response.result.models,
+            dimensionProfile: response.result.dimensionProfile,
             ...meta,
           });
         }

@@ -1,10 +1,18 @@
 import type {
+  EmotionIntensity,
+  EmotionType,
+  MentalModelDimensionProfile,
   MentalModelItem,
   MentalModelVersion,
   MonthlyThoughtAnalysis,
   MonthlyThoughtReview,
   WeeklyEmotionAnalysis,
   WeeklyEmotionReview,
+} from "./awareness.ts";
+import {
+  completeMentalModelDimensionProfile,
+  emotionIntensityFromLegacyLevel,
+  emotionTypeFromLegacyLevel,
 } from "./awareness.ts";
 import type { AiProviderId, AiReviewState, WeekUpState } from "./week-up-domain.ts";
 
@@ -19,6 +27,8 @@ export type WeeklyEmotionFacts = Readonly<{
     localDate: string;
     occurredAt: string;
     level: number;
+    emotionType: EmotionType;
+    intensity: EmotionIntensity;
     reason?: string;
   }>[];
 }>;
@@ -42,9 +52,12 @@ export type MonthlyAwarenessFacts = Readonly<{
     localDate: string;
     occurredAt: string;
     level: number;
+    emotionType: EmotionType;
+    intensity: EmotionIntensity;
     reason?: string;
   }>[];
   previousModels: readonly MentalModelItem[];
+  previousDimensionProfile: readonly MentalModelDimensionProfile[];
 }>;
 
 export type HistoricalThoughtInput = Readonly<{
@@ -69,6 +82,7 @@ export type AwarenessAnalysisResult =
       mentalModelVersionId: string;
       thought?: MonthlyThoughtAnalysis;
       models: readonly MentalModelItem[];
+      dimensionProfile: readonly MentalModelDimensionProfile[];
     }>;
 
 export type AwarenessAnalysisResponse = Readonly<{
@@ -92,6 +106,18 @@ function previousModels(state: WeekUpState, version: MentalModelVersion): readon
   return previous?.analysis.status === "ready" ? previous.analysis.models : [];
 }
 
+function previousDimensionProfile(
+  state: WeekUpState,
+  version: MentalModelVersion,
+): readonly MentalModelDimensionProfile[] {
+  const previous = version.previousVersionId
+    ? state.mentalModelVersions.find((item) => item.id === version.previousVersionId)
+    : undefined;
+  return previous?.analysis.status === "ready"
+    ? completeMentalModelDimensionProfile(previous.analysis.models, previous.analysis.dimensionProfile)
+    : completeMentalModelDimensionProfile([]);
+}
+
 export function buildWeeklyEmotionFacts(state: WeekUpState, review: WeeklyEmotionReview): WeeklyEmotionFacts {
   const snapshotIds = new Set(review.sourceSnapshotIds);
   const entryIds = new Set(state.dailyAwarenessSnapshots
@@ -106,6 +132,8 @@ export function buildWeeklyEmotionFacts(state: WeekUpState, review: WeeklyEmotio
       localDate: entry.localDate,
       occurredAt: entry.occurredAt,
       level: entry.level,
+      emotionType: entry.emotionType ?? emotionTypeFromLegacyLevel(entry.level),
+      intensity: entry.intensity ?? emotionIntensityFromLegacyLevel(entry.level),
       ...(entry.reason ? { reason: entry.reason } : {}),
     }];
   }).sort((left, right) => left.occurredAt.localeCompare(right.occurredAt));
@@ -147,6 +175,8 @@ function buildModelFacts(
       localDate: entry.localDate,
       occurredAt: entry.occurredAt,
       level: entry.level,
+      emotionType: entry.emotionType ?? emotionTypeFromLegacyLevel(entry.level),
+      intensity: entry.intensity ?? emotionIntensityFromLegacyLevel(entry.level),
       ...(entry.reason ? { reason: entry.reason } : {}),
     }];
   }).sort((left, right) => left.occurredAt.localeCompare(right.occurredAt));
@@ -162,6 +192,7 @@ function buildModelFacts(
     thoughts,
     emotions,
     previousModels: previousModels(state, version),
+    previousDimensionProfile: previousDimensionProfile(state, version),
   };
 }
 
@@ -184,6 +215,7 @@ export function buildHistoricalBaselineFacts(
     thoughts: [...thoughts].sort((left, right) => left.occurredAt.localeCompare(right.occurredAt)),
     emotions: [],
     previousModels: [],
+    previousDimensionProfile: completeMentalModelDimensionProfile([]),
   };
 }
 

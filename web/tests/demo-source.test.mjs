@@ -83,23 +83,44 @@ test("keeps navigation ordered and weight accessible only from Today", async () 
 });
 
 test("adds sparse self-awareness capture and three independent archive tabs", async () => {
-  const [page, awareness] = await Promise.all([
+  const [page, awareness, awarenessDomain] = await Promise.all([
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/awareness-view.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../lib/awareness.ts", import.meta.url), "utf8"),
   ]);
   assert.match(page, /awarenessEntries=\{weekUp\.state\.awarenessEntries\}/);
   assert.ok(page.indexOf("<AwarenessQuickCapture") < page.indexOf('className="pixel-card weight-widget"'));
   assert.match(awareness, /记录一个值得留下的想法/);
   assert.match(awareness, /记录一次强烈感受/);
+  for (const label of ["低落", "焦虑", "愤怒", "愉悦", "激动", "复杂"]) {
+    assert.match(awarenessDomain, new RegExp(label));
+  }
+  assert.match(awarenessDomain, /明显/);
+  assert.match(awarenessDomain, /极强/);
+  assert.doesNotMatch(awarenessDomain, /偏低/);
+  assert.doesNotMatch(awarenessDomain, /高涨/);
   assert.match(awareness, /思想变化/);
   assert.match(awareness, /情绪流/);
   assert.match(awareness, /心智模型/);
   assert.match(awareness, /空白日期不补值/);
-  assert.match(awareness, /历史思想形成的当前心智模型/);
+  assert.match(awareness, /在新记录上持续发展/);
   assert.match(awareness, /monthlyReviews\.length === 0 \? " awareness-columns--single"/);
   assert.match(awareness, /weeklyReviews\.length === 0 \? " awareness-columns--single"/);
   assert.doesNotMatch(awareness, /className="pixel-card awareness-quick"/);
   assert.equal((awareness.match(/className="pixel-card awareness-capture/g) ?? []).length, 2);
+});
+
+test("mental model view renders one current radar without version comparison cards", async () => {
+  const [awareness, radar] = await Promise.all([
+    readFile(new URL("../app/awareness-view.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/mental-model-radar.tsx", import.meta.url), "utf8"),
+  ]);
+  assert.match(awareness, /MentalModelRadar/);
+  assert.match(awareness, /当前心智模型/);
+  assert.doesNotMatch(awareness, /awareness-version-strip/);
+  assert.doesNotMatch(awareness, /mental-model-grid/);
+  assert.match(radar, /viewBox="0 0 640 520"/);
+  assert.match(radar, /数值表示记录证据强度，不代表优劣/);
 });
 
 test("uses one cache-free canonical loopback entry on a strict fixed port", async () => {

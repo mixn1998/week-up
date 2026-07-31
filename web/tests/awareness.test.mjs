@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { buildDailyAwarenessSnapshot } from "../lib/awareness.ts";
+import {
+  MENTAL_MODEL_DIMENSIONS,
+  buildDailyAwarenessSnapshot,
+  completeMentalModelDimensionProfile,
+} from "../lib/awareness.ts";
 import { createEmptyWeekUpState, dispatchWeekUp, migrateWeekUpState } from "../lib/week-up-domain.ts";
 import { dueDailySettlementCommands, dueSettlementCommands } from "../lib/settlement-scheduler.ts";
 
@@ -32,6 +36,83 @@ test("daily awareness snapshot preserves sparse same-day event order without inv
   assert.equal(snapshot.emotionSummary.recordedEventCount, 1);
   assert.equal("averageLevel" in snapshot.emotionSummary, false);
   assert.equal(buildDailyAwarenessSnapshot([], "2026-07-31", "empty", "2026-08-01T00:00:00.000Z"), undefined);
+});
+
+test("mental profile always exposes the fixed eight dimensions", () => {
+  const profile = completeMentalModelDimensionProfile([], []);
+  assert.deepEqual(profile.map((item) => item.dimension), MENTAL_MODEL_DIMENSIONS.map((item) => item.key));
+  assert.ok(profile.every((item) => item.strength === 0));
+});
+
+test("new emotion events keep type and strong-intensity grading separate", () => {
+  const outcome = dispatchWeekUp(createEmptyWeekUpState(), {
+    type: "awareness.emotion.record",
+    emotionType: "anxious",
+    intensity: 3,
+    reason: "等待重要结果",
+    occurredAt: "2026-07-31T08:00:00.000Z",
+  }, context("2026-07-31T08:00:00.000Z"));
+  const entry = outcome.state.awarenessEntries[0];
+  assert.equal(entry.kind, "emotion");
+  assert.equal(entry.emotionType, "anxious");
+  assert.equal(entry.intensity, 3);
+  assert.equal(entry.level, 2);
+});
+
+test("legacy mental models derive a complete bounded profile", () => {
+  const profile = completeMentalModelDimensionProfile([{
+    stableKey: "attention-control",
+    name: "注意力主权",
+    summary: "将注意力配置视为主体性实践。",
+    triggers: [],
+    assumptions: ["回应比控制世界重要"],
+    defaultResponses: [],
+    currentStrategies: ["收束注意力"],
+    supportingEntryIds: [],
+    counterEvidenceEntryIds: [],
+    confidence: "high",
+    changeType: "new",
+  }]);
+  assert.equal(profile.length, 8);
+  assert.ok(profile.find((item) => item.dimension === "self").strength > 0);
+  assert.ok(profile.every((item) => item.strength >= 0 && item.strength <= 100));
+});
+
+test("incremental mental updates preserve dimensions without new evidence", () => {
+  const empty = createEmptyWeekUpState();
+  const baseProfile = completeMentalModelDimensionProfile([], [{
+    dimension: "relationships", strength: 72, confidence: "high", summary: "关系依赖共同建构",
+    defaultJudgments: ["差异可以协商"], currentStrategies: ["先确认彼此边界"],
+    supportingModelKeys: [], changeDirection: "stable",
+  }]);
+  const baseline = {
+    id: "baseline", scope: "historical-baseline", periodKey: "baseline", revisionNumber: 1,
+    sourceThoughtEntryIds: [], sourceEmotionSnapshotIds: [], sourceEmotionReviewIds: [],
+    analysis: { status: "ready", models: [], dimensionProfile: baseProfile },
+    frozenAt: "2026-07-01T00:00:00.000Z",
+  };
+  const pending = {
+    id: "month", scope: "monthly", periodKey: "2026-07", revisionNumber: 2,
+    previousVersionId: "baseline", sourceThoughtEntryIds: [], sourceEmotionSnapshotIds: [],
+    sourceEmotionReviewIds: [], analysis: { status: "pending" },
+    frozenAt: "2026-08-01T00:00:00.000Z",
+  };
+  const state = dispatchWeekUp({
+    ...empty, mentalModelVersions: [baseline, pending],
+  }, {
+    type: "awareness.monthly-analysis.succeeded",
+    mentalModelVersionId: "month",
+    models: [],
+    dimensionProfile: [{
+      dimension: "self", strength: 64, confidence: "medium", summary: "主体性继续发展",
+      defaultJudgments: [], currentStrategies: [], supportingModelKeys: [],
+      changeDirection: "strengthened",
+    }],
+    provider: "codex-cli", preferredProvider: "codex-cli", fallbackUsed: false,
+  }, context()).state;
+  const profile = state.mentalModelVersions.at(-1).analysis.dimensionProfile;
+  assert.equal(profile.find((item) => item.dimension === "relationships").strength, 72);
+  assert.equal(profile.find((item) => item.dimension === "self").strength, 64);
 });
 
 test("awareness-only past dates receive one daily settlement and freeze their original events", () => {

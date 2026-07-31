@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   buildHistoricalBaselineFacts,
+  buildMonthlyAwarenessFacts,
   buildWeeklyEmotionFacts,
   createAwarenessAnalysisClient,
 } from "../lib/awareness-analysis-client.ts";
@@ -72,6 +73,7 @@ test("awareness client posts structured facts and accepts a structured result", 
         kind: "historical-baseline",
         mentalModelVersionId: "model-1",
         models: [],
+        dimensionProfile: [],
       },
       provider: "codex-cli",
       preferredProvider: "codex-cli",
@@ -81,9 +83,38 @@ test("awareness client posts structured facts and accepts a structured result", 
   });
   const result = await client.generate({
     kind: "historical-baseline", sampling: "sparse-significant-events",
-    mentalModelVersionId: "model-1", thoughts: [], emotions: [], previousModels: [],
+    mentalModelVersionId: "model-1", thoughts: [], emotions: [], previousModels: [], previousDimensionProfile: [],
   });
   assert.equal(calls[0].url, "/week-up-review-api/v1/awareness");
   assert.equal(calls[0].body.facts.sampling, "sparse-significant-events");
   assert.equal(result.result.kind, "historical-baseline");
+});
+
+test("monthly facts carry the complete current profile forward", () => {
+  const previous = {
+    id: "baseline", scope: "historical-baseline", periodKey: "baseline", revisionNumber: 1,
+    sourceThoughtEntryIds: [], sourceEmotionSnapshotIds: [], sourceEmotionReviewIds: [],
+    analysis: {
+      status: "ready", models: [], dimensionProfile: [{
+        dimension: "self", strength: 68, confidence: "high", summary: "保持主体性",
+        defaultJudgments: [], currentStrategies: [], supportingModelKeys: [],
+        changeDirection: "stable",
+      }],
+    }, frozenAt: "2026-07-01T00:00:00.000Z",
+  };
+  const pending = {
+    id: "month", scope: "monthly", periodKey: "2026-07", revisionNumber: 2,
+    previousVersionId: "baseline", sourceThoughtEntryIds: [], sourceEmotionSnapshotIds: [],
+    sourceEmotionReviewIds: [], analysis: { status: "pending" },
+    frozenAt: "2026-08-01T00:00:00.000Z",
+  };
+  const facts = buildMonthlyAwarenessFacts({
+    ...createEmptyWeekUpState(), mentalModelVersions: [previous, pending],
+  }, undefined, pending);
+  assert.equal(facts.previousDimensionProfile.length, 8);
+  assert.equal(facts.previousDimensionProfile.find((item) => item.dimension === "self").strength, 68);
+  const prompt = buildAwarenessPrompt(facts);
+  assert.match(prompt, /完整当前画像/);
+  assert.match(prompt, /没有新证据时必须保留/);
+  assert.match(prompt, /dimensionProfile/);
 });
